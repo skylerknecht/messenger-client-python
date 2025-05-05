@@ -1,8 +1,9 @@
 import ast
 import random
 import os
-import re
+from pathlib import Path
 
+SCRIPT_DIR = Path(__file__).resolve().parent
 
 class Pyfuscator(ast.NodeTransformer):
     def __init__(self):
@@ -365,9 +366,10 @@ def create_loader(messenger_dir: str):
     loader.append("del sys, types, pkg")
     return "\n".join(loader)
 
-def build():
-    with open('client.py', 'r') as f:
-        client = create_loader('./messenger') + '\n' + f.read()
+async def build():
+    print(f'{SCRIPT_DIR}/client.py')
+    with open(f'{SCRIPT_DIR}/client.py', 'r') as f:
+        client = create_loader('messenger') + '\n' + f.read()
     pyfuscator = Pyfuscator()
     pyfuscator.obfuscate_python_file(client, 'messenger-client.py')
 
