@@ -263,7 +263,7 @@ class Pyfuscator(ast.NodeTransformer):
         new_file_path = output if output.endswith('.py') else output + '.py'
         with open(new_file_path, 'w', encoding='utf-8') as f:
             f.write(obfuscated_code)
-        print(f"[+] Obfuscation complete. Saved as {new_file_path}")
+        print(f"[+] Saved python client as {new_file_path}")
 
 class New(ast.NodeTransformer):
     def __init__(self, blacklist, var_map, func_map, class_map):
@@ -367,7 +367,6 @@ def create_loader(messenger_dir: str):
     return "\n".join(loader)
 
 async def build():
-    print(f'{SCRIPT_DIR}/client.py')
     with open(f'{SCRIPT_DIR}/client.py', 'r') as f:
         client = create_loader('messenger') + '\n' + f.read()
     pyfuscator = Pyfuscator()
