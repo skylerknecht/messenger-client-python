@@ -1,4 +1,5 @@
 import ast
+import asyncio
 import random
 import os
 from pathlib import Path
@@ -373,4 +374,4 @@ async def build():
     pyfuscator.obfuscate_python_file(client, 'messenger-client.py')
 
 if __name__ == "__main__":
-    build()
+    asyncio.run(build())
