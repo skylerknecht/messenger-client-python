@@ -24,7 +24,15 @@ class Pyfuscator(ast.NodeTransformer):
             "apple", "banana", "cherry", "dragon", "elephant", "falcon", "gorilla", "hippo",
             "iguana", "jaguar", "kangaroo", "lion", "monkey", "narwhal", "octopus", "panda",
             "quokka", "rhinoceros", "squirrel", "tiger", "umbrella", "vulture", "walrus", "xenops",
-            "yak", "zebra"
+            "yak", "zebra", "antelope", "beetle", "cheetah", "dolphin", "emu", "ferret", "gazelle",
+            "hamster", "ibis", "koala", "lemur", "meerkat", "newt", "opossum", "porcupine", "rabbit",
+            "sloth", "toucan", "urchin", "vole", "weasel", "xerus", "alpaca", "bison", "crab", "deer",
+            "eagle", "fox", "gecko", "hawk", "inchworm", "jackal", "kiwi", "lizard", "moose", "numbat",
+            "orca", "penguin", "quail", "rooster", "seal", "turkey", "urchin", "viper", "wolf", "xerox",
+            "yellowtail", "zebu", "badger", "coyote", "donkey", "eel", "flamingo", "giraffe", "heron",
+            "impala", "lobster", "mole", "narwhal", "oyster", "parrot", "quokka", "raccoon", "shrimp",
+            "tapir", "urchin", "vulture", "wolverine", "xantus", "yabby", "zorilla", "cat", "dog", "mouse",
+            "goat", "cow", "sheep", "pig", "horse", "bat", "rat"
         ]
 
     def _random_variable_name(self):
