@@ -10,6 +10,8 @@ import asyncio
 import argparse
 import ssl
 import struct
+import socket
+import errno
 
 from abc import ABC, abstractmethod
 from urllib import request
@@ -43,29 +45,59 @@ class MessengerClient(ABC):
 
     async def handle_initiate_forwarder_client_req(self, message):
         try:
+            ip = message['IP Address']
+            port = message['Port']
+            client_id = message['Forwarder Client ID']
+
             reader, writer = await asyncio.wait_for(
-                asyncio.open_connection(message['IP Address'], message['Port']),
-                timeout=5  # Timeout after 5 seconds
+                asyncio.open_connection(ip, port),
+                timeout=5
             )
-            self.forwarder_clients[message['Forwarder Client ID']] = ForwarderClient(reader, writer)
-            bind_addr, bind_port = writer.get_extra_info('sockname')
+            self.forwarder_clients[client_id] = ForwarderClient(reader, writer)
+
+            bind_info = writer.get_extra_info("sockname")
+            bind_addr = bind_info[0]
+            bind_port = bind_info[1]
+
+            sock = writer.get_extra_info("socket")
+            family = sock.family
+            atype = 1 if family == socket.AF_INET else 4
 
             downstream_message = InitiateForwarderClientRep(
-                forwarder_client_id=message['Forwarder Client ID'],
+                forwarder_client_id=client_id,
                 bind_address=bind_addr,
                 bind_port=bind_port,
-                address_type=0,
+                address_type=atype,
                 reason=0
             )
-            asyncio.create_task(self.stream(message['Forwarder Client ID']))
+            asyncio.create_task(self.stream(client_id))
+
+        except socket.gaierror:
+            reason = 0x04
+        except socket.timeout:
+            reason = 0x06
+        except ConnectionRefusedError:
+            reason = 0x05
+        except OSError as e:
+            reason = {
+                errno.ENETUNREACH: 0x03,
+                errno.EHOSTUNREACH: 0x04,
+                errno.ECONNREFUSED: 0x05,
+                errno.ENOPROTOOPT: 0x07,
+                errno.EAFNOSUPPORT: 0x08
+            }.get(e.errno, 0x01)
         except Exception:
+            reason = 0x01
+
+        if 'downstream_message' not in locals():
             downstream_message = InitiateForwarderClientRep(
                 forwarder_client_id=message['Forwarder Client ID'],
                 bind_address='',
                 bind_port=0,
                 address_type=0,
-                reason=1
+                reason=reason
             )
+
         await self.send_downstream_message(downstream_message)
 
     async def start_remote_port_forwards(self, remote_port_forwards):
