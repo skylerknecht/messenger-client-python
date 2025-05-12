@@ -3,6 +3,7 @@ try:
     import aiohttp
     no_ws = False
 except ImportError:
+    print('[!] Failed to import AIOHTTP, Websockets will not be supported.')
     no_ws = True
 
 import asyncio
