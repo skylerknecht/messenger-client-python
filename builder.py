@@ -2,6 +2,7 @@ import ast
 import asyncio
 import random
 import os
+import uuid
 from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -36,16 +37,11 @@ class Pyfuscator(ast.NodeTransformer):
         ]
 
     def _random_variable_name(self):
-        """Generates a random PEP 8-compliant variable name in snake_case."""
-        return f"{random.choice(self.word_list)}_{random.choice(self.word_list)}"
+        return f"var_{uuid.uuid4().hex[:8]}"
 
     def _random_class_name(self):
-        """Generates a random PEP 8-compliant class name in PascalCase."""
-
-        def capitalize(word):
-            return word.capitalize()
-
-        return capitalize(random.choice(self.word_list)) + capitalize(random.choice(self.word_list))
+        suffix = uuid.uuid4().hex[:8]
+        return ''.join(s.capitalize() for s in ['obj'] + [suffix[i:i + 2] for i in range(0, 8, 2)])
 
     def visit_Import(self, node):
         """ Track imported modules to prevent obfuscation. """
@@ -289,12 +285,6 @@ class New(ast.NodeTransformer):
             },
             *blacklist
         }
-        self.word_list = [
-            "apple", "banana", "cherry", "dragon", "elephant", "falcon", "gorilla", "hippo",
-            "iguana", "jaguar", "kangaroo", "lion", "monkey", "narwhal", "octopus", "panda",
-            "quokka", "rhinoceros", "squirrel", "tiger", "umbrella", "vulture", "walrus", "xenops",
-            "yak", "zebra"
-        ]
 
     def visit_Name(self, node):
         # Merge all mappings into one lookup dictionary
