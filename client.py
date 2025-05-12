@@ -72,34 +72,36 @@ class MessengerClient(ABC):
             )
 
             asyncio.create_task(self.stream(client_id))
-
         except socket.gaierror:
-            reason = 0x04
+            reason = 4
         except socket.timeout:
-            reason = 0x06
+            reason = 6
         except ConnectionRefusedError:
-            reason = 0x05
+            reason = 5
         except OSError as e:
             reason = {
-                errno.ENETUNREACH: 0x03,
-                errno.EHOSTUNREACH: 0x04,
-                errno.ECONNREFUSED: 0x05,
-                errno.ENOPROTOOPT: 0x07,
-                errno.EAFNOSUPPORT: 0x08
-            }.get(e.errno, 0x01)
+                errno.ENETUNREACH: 3,
+                errno.EHOSTUNREACH: 4,
+                errno.ECONNREFUSED: 5,
+                errno.ENOPROTOOPT: 7,
+                errno.EAFNOSUPPORT: 8
+            }.get(e.errno, 1)
         except Exception:
-            reason = 0x01
+            reason = 1
+        else:
+            await self.send_downstream_message(downstream_message)
+            return
 
-        if 'downstream_message' not in locals():
-            downstream_message = InitiateForwarderClientRep(
-                forwarder_client_id=message['Forwarder Client ID'],
-                bind_address='0.0.0.0',
-                bind_port=0,
-                address_type=1,  # always valid
-                reason=reason
-            )
+        downstream_message = InitiateForwarderClientRep(
+            forwarder_client_id=message["Forwarder Client ID"],
+            bind_address="0.0.0.0",
+            bind_port=0,
+            address_type=1,
+            reason=reason
+        )
 
         await self.send_downstream_message(downstream_message)
+        return
 
     async def start_remote_port_forwards(self, remote_port_forwards):
         for remote_port_forward in remote_port_forwards:
