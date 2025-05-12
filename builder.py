@@ -352,7 +352,8 @@ def create_loader(messenger_dir: str):
 
     for fname in module_files:
         name = fname[:-3]
-        src = open(os.path.join(messenger_dir, fname), 'r', encoding='utf-8').read()
+        src_path = SCRIPT_DIR / messenger_dir / fname
+        src = src_path.read_text(encoding='utf-8')
         chars, offsets = [], []
         for c in src:
             off = random.randint(1, 50)
