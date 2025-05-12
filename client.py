@@ -70,6 +70,7 @@ class MessengerClient(ABC):
                 address_type=atype,
                 reason=0
             )
+
             asyncio.create_task(self.stream(client_id))
 
         except socket.gaierror:
@@ -92,9 +93,9 @@ class MessengerClient(ABC):
         if 'downstream_message' not in locals():
             downstream_message = InitiateForwarderClientRep(
                 forwarder_client_id=message['Forwarder Client ID'],
-                bind_address='',
+                bind_address='0.0.0.0',
                 bind_port=0,
-                address_type=0,
+                address_type=1,  # always valid
                 reason=reason
             )
 
@@ -219,7 +220,7 @@ class WebSocketClient(MessengerClient):
             messages = self.deserialize_messages(msg.data)
             for message in messages:
                 try:
-                    await self.handle_message(message)
+                    asyncio.create_task(self.handle_message(message))
                 except:
                     continue
 
@@ -309,7 +310,7 @@ class HTTPClient(MessengerClient):
                 messages = self.deserialize_messages(raw_data)
                 for message in messages:
                     try:
-                        await self.handle_message(message)
+                        asyncio.create_task(self.handle_message(message))
                     except:
                         continue
             await asyncio.sleep(1.0)
