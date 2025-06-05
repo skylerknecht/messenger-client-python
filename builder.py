@@ -1,13 +1,12 @@
 import ast
 import asyncio
 import random
-import os
 import uuid
 from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 
-class Pyfuscator(ast.NodeTransformer):
+class Obfuscator(ast.NodeTransformer):
     def __init__(self):
         super().__init__()
         self.var_map = {}
@@ -258,17 +257,13 @@ class Pyfuscator(ast.NodeTransformer):
         )
         return ast.copy_location(new_node, node)
 
-    def obfuscate_python_file(self, client, output):
+    def obfuscate_python_file(self, client, name):
         tree = ast.parse(client)
 
         self.visit(tree)
         obfuscated_tree = New(self.obfuscate_blacklist, self.var_map, self.func_map, self.class_map).visit(tree)
         obfuscated_code = ast.unparse(obfuscated_tree)
-
-        new_file_path = output if output.endswith('.py') else output + '.py'
-        with open(new_file_path, 'w', encoding='utf-8') as f:
-            f.write(obfuscated_code)
-        print(f"[+] Saved python client as {new_file_path}")
+        write_file(obfuscated_code, name)
 
 class New(ast.NodeTransformer):
     def __init__(self, blacklist, var_map, func_map, class_map):
@@ -366,11 +361,20 @@ def create_loader(messenger_dir: str):
     loader.append("del sys, types, pkg")
     return "\n".join(loader)
 
-async def build():
+async def write_file(output, name):
+    new_file_path = name if name.endswith('.py') else name + '.py'
+    with open(new_file_path, 'w', encoding='utf-8') as f:
+        f.write(output)
+    print(f"[+] Saved python client as {new_file_path}")
+
+async def build(obfuscate, name):
     with open(f'{SCRIPT_DIR}/client.py', 'r') as f:
         client = create_loader('messenger') + '\n' + f.read()
-    pyfuscator = Pyfuscator()
-    pyfuscator.obfuscate_python_file(client, 'messenger-client.py')
+    if not obfuscate:
+        await write_file(client, name)
+        return
+    obfuscator = Obfuscator()
+    obfuscator.obfuscate_python_file(client, name)
 
 if __name__ == "__main__":
-    asyncio.run(build())
+    asyncio.run(build(True, 'messenger-client.py'))
