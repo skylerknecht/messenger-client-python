@@ -361,17 +361,17 @@ def create_loader(messenger_dir: str):
     loader.append("del sys, types, pkg")
     return "\n".join(loader)
 
-async def write_file(output, name):
+def write_file(output, name):
     new_file_path = name if name.endswith('.py') else name + '.py'
     with open(new_file_path, 'w', encoding='utf-8') as f:
         f.write(output)
     print(f"[+] Saved python client as {new_file_path}")
 
-async def build(obfuscate, name):
+async def build(no_obfuscate, name):
     with open(f'{SCRIPT_DIR}/client.py', 'r') as f:
         client = create_loader('messenger') + '\n' + f.read()
-    if not obfuscate:
-        await write_file(client, name)
+    if no_obfuscate:
+        write_file(client, name)
         return
     obfuscator = Obfuscator()
     obfuscator.obfuscate_python_file(client, name)
