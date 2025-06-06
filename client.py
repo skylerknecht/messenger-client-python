@@ -266,24 +266,28 @@ class HTTPClient(MessengerClient):
         super().__init__(encryption_key)
         self.server_url = server_url
         self.remote_port_forwards = remote_port_forwards
-        proxies = {
-            'http': '' if proxy is None else proxy,
-            'https': '' if proxy is None else proxy
-        }
-
-        # ToDo: Support Proxies with HTTPClient
         self.downstream_messages = asyncio.Queue()
+        self.ssl_context = ssl.create_default_context()
+
+        proxy_handler = request.ProxyHandler({
+            'http': proxy,
+            'https': proxy
+        } if proxy else {})
+
+        https_handler = request.HTTPSHandler(context=self.ssl_context)
+        self.opener = request.build_opener(proxy_handler, https_handler)
 
     async def connect(self):
         await self.start_remote_port_forwards(self.remote_port_forwards)
-        # Start by sending a CheckInMessage
+
         downstream_messages = [CheckInMessage(messenger_id='')]
         check_in_request = request.Request(
             self.server_url,
             headers=self.headers,
             data=self.serialize_messages(downstream_messages)
         )
-        with request.urlopen(check_in_request, context=self.ssl_context) as response:
+
+        with self.opener.open(check_in_request) as response:
             if response.status != 200:
                 return
             messages = self.deserialize_messages(response.read())
@@ -292,20 +296,18 @@ class HTTPClient(MessengerClient):
             self.identifier = check_in_msg.messenger_id
 
     async def start(self):
-        """
-        Main loop of polling: we repeatedly send check_in + any queued messages,
-        then read the server's response.
-        """
         while True:
-            # Always start with a CheckInMessage
             to_send = [CheckInMessage(messenger_id=self.identifier)]
-
-            # Drain the queue and serialize each message
             while not self.downstream_messages.empty():
                 to_send.append(await self.downstream_messages.get())
 
-            check_in_req = request.Request(self.server_url, headers=self.headers, data=self.serialize_messages(to_send))
-            with request.urlopen(check_in_req, context=self.ssl_context) as response:
+            check_in_req = request.Request(
+                self.server_url,
+                headers=self.headers,
+                data=self.serialize_messages(to_send)
+            )
+
+            with self.opener.open(check_in_req) as response:
                 if response.status != 200:
                     break
                 raw_data = response.read()
@@ -411,6 +413,10 @@ class Messenger:
                 await self.try_http(candidate_url, self.encryption_key, self.remote_port_forwards, self.proxy)
             if "ws" in attempt and not no_ws:
                 print('[*] Attempting to connect to Messenger Server over WebSockets')
+                if attempt == "wss":
+                    candidate_url = f"https://{remainder}/"
+                else:
+                    candidate_url = f"http://{remainder}/"
                 await self.try_ws(candidate_url, self.encryption_key, self.remote_port_forwards, self.proxy)
         print('Messenger Client stopped.')
 
