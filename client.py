@@ -11,6 +11,7 @@ import argparse
 import ssl
 import struct
 import socket
+import time
 import errno
 
 from abc import ABC, abstractmethod
@@ -215,9 +216,6 @@ class WebSocketClient(MessengerClient):
             break
 
     async def start(self):
-        """
-        Continuously read messages from self.ws until closed or error.
-        """
         async for msg in self.ws:
             messages = self.deserialize_messages(msg.data)
             for message in messages:
@@ -225,6 +223,24 @@ class WebSocketClient(MessengerClient):
                     asyncio.create_task(self.handle_message(message))
                 except:
                     continue
+
+        print('[*] Disconnected from server attempt to reconnect')
+
+        timeout = 1800  # 30 minutes
+        deadline = time.time() + timeout
+
+        while time.time() < deadline:
+            try:
+                await asyncio.sleep(15)
+                self.ws = await self.session.ws_connect(self.server_url)
+                downstream_messages = [CheckInMessage(messenger_id=self.identifier)]
+                await self.ws.send_bytes(self.serialize_messages(downstream_messages))
+                print("[+] Reconnected and check-in sent.")
+                return await self.start()  # restart loop cleanly
+            except Exception as e:
+                print(f"[!] Reconnect failed: {type(e).__name__}")
+
+        print("[-] Reconnect timeout after 30 minutes. Giving up.")
 
     async def stop(self):
         if self.ws is not None and not self.ws.closed:
@@ -296,28 +312,53 @@ class HTTPClient(MessengerClient):
             self.identifier = check_in_msg.messenger_id
 
     async def start(self):
+        timeout = 1800  # 30 minutes
+        retry_interval = 15
+        deadline = time.time() + timeout
+
         while True:
-            to_send = [CheckInMessage(messenger_id=self.identifier)]
-            while not self.downstream_messages.empty():
-                to_send.append(await self.downstream_messages.get())
+            try:
+                to_send = [CheckInMessage(messenger_id=self.identifier)]
+                while not self.downstream_messages.empty():
+                    to_send.append(await self.downstream_messages.get())
 
-            check_in_req = request.Request(
-                self.server_url,
-                headers=self.headers,
-                data=self.serialize_messages(to_send)
-            )
+                check_in_req = request.Request(
+                    self.server_url,
+                    headers=self.headers,
+                    data=self.serialize_messages(to_send)
+                )
 
-            with self.opener.open(check_in_req) as response:
-                if response.status != 200:
-                    break
-                raw_data = response.read()
-                messages = self.deserialize_messages(raw_data)
-                for message in messages:
-                    try:
+                with self.opener.open(check_in_req) as response:
+                    if response.status != 200:
+                        raise ConnectionError(f"Bad status: {response.status}")
+
+                    raw_data = response.read()
+                    messages = self.deserialize_messages(raw_data)
+                    for message in messages:
                         asyncio.create_task(self.handle_message(message))
-                    except:
-                        continue
-            await asyncio.sleep(1.0)
+
+                await asyncio.sleep(1.0)
+
+            except Exception as e:
+                print(f"[!] HTTPClient error: {type(e).__name__}, attempting to reconnect...")
+                while time.time() < deadline:
+                    await asyncio.sleep(retry_interval)
+                    try:
+                        # Try a basic check-in
+                        check_req = request.Request(
+                            self.server_url,
+                            headers=self.headers,
+                            data=self.serialize_messages([CheckInMessage(messenger_id=self.identifier)])
+                        )
+                        with self.opener.open(check_req) as response:
+                            if response.status == 200:
+                                print("[+] Reconnected and check-in successful.")
+                                break
+                    except Exception as retry_err:
+                        print(f"[!] Retry failed: {type(retry_err).__name__}")
+                else:
+                    print("[-] Failed to reconnect after 30 minutes. Exiting.")
+                    return
 
     async def send_downstream_message(self, downstream_message):
         """
