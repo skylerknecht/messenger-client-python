@@ -2,6 +2,8 @@ import ast
 import asyncio
 import random
 import uuid
+import string
+import keyword
 from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -17,30 +19,21 @@ class Obfuscator(ast.NodeTransformer):
             *dir(object),
             *{
                 'self',
-                'cls'
+                'cls',
             },
         }
-        self.word_list = [
-            "apple", "banana", "cherry", "dragon", "elephant", "falcon", "gorilla", "hippo",
-            "iguana", "jaguar", "kangaroo", "lion", "monkey", "narwhal", "octopus", "panda",
-            "quokka", "rhinoceros", "squirrel", "tiger", "umbrella", "vulture", "walrus", "xenops",
-            "yak", "zebra", "antelope", "beetle", "cheetah", "dolphin", "emu", "ferret", "gazelle",
-            "hamster", "ibis", "koala", "lemur", "meerkat", "newt", "opossum", "porcupine", "rabbit",
-            "sloth", "toucan", "urchin", "vole", "weasel", "xerus", "alpaca", "bison", "crab", "deer",
-            "eagle", "fox", "gecko", "hawk", "inchworm", "jackal", "kiwi", "lizard", "moose", "numbat",
-            "orca", "penguin", "quail", "rooster", "seal", "turkey", "urchin", "viper", "wolf", "xerox",
-            "yellowtail", "zebu", "badger", "coyote", "donkey", "eel", "flamingo", "giraffe", "heron",
-            "impala", "lobster", "mole", "narwhal", "oyster", "parrot", "quokka", "raccoon", "shrimp",
-            "tapir", "urchin", "vulture", "wolverine", "xantus", "yabby", "zorilla", "cat", "dog", "mouse",
-            "goat", "cow", "sheep", "pig", "horse", "bat", "rat"
-        ]
 
-    def _random_variable_name(self):
-        return f"var_{uuid.uuid4().hex[:8]}"
-
-    def _random_class_name(self):
-        suffix = uuid.uuid4().hex[:8]
-        return ''.join(s.capitalize() for s in ['obj'] + [suffix[i:i + 2] for i in range(0, 8, 2)])
+    def _random_name(self):
+        rand_part = ''.join(random.choices(string.ascii_letters + string.digits, k=6))
+        # 8 hex digits from a UUID
+        uuid_part = uuid.uuid4().hex[:8]
+        name = f"{rand_part}{uuid_part}"
+        # If it starts with a digit, prefix with underscore
+        if not (name[0].isalpha() or name[0] == "_"):
+            name = "_" + name
+        # Validate and return
+        if name.isidentifier() and not keyword.iskeyword(name):
+            return name
 
     def visit_Import(self, node):
         """ Track imported modules to prevent obfuscation. """
@@ -135,14 +128,14 @@ class Obfuscator(ast.NodeTransformer):
                 if target.id in self.var_map.values() or target.id in self.obfuscate_blacklist:
                     continue
                 if target.id not in self.var_map:
-                    self.var_map[target.id] = self._random_variable_name()
+                    self.var_map[target.id] = self._random_name()
                 target.id = self.var_map[target.id]
 
         return node
 
     def visit_ClassDef(self, node):
         if node.name not in self.class_map:
-            self.class_map[node.name] = self._random_class_name()
+            self.class_map[node.name] = self._random_name()
         node.name = self.class_map[node.name]
         self.generic_visit(node)
         return node
@@ -150,7 +143,7 @@ class Obfuscator(ast.NodeTransformer):
     def visit_FunctionDef(self, node):
         if node.name not in self.obfuscate_blacklist:
             if node.name not in self.func_map:
-                self.func_map[node.name] = self._random_variable_name()
+                self.func_map[node.name] = self._random_name()
             node.name = self.func_map[node.name]
 
         # Rename function arguments
@@ -158,7 +151,7 @@ class Obfuscator(ast.NodeTransformer):
             if arg.arg in self.obfuscate_blacklist:
                 continue
             if arg.arg not in self.var_map:
-                self.var_map[arg.arg] = self._random_variable_name()
+                self.var_map[arg.arg] = self._random_name()
             arg.arg = self.var_map[arg.arg]  # Rename the argument
 
         node = self.generic_visit(node)  # Process the function body
@@ -167,7 +160,7 @@ class Obfuscator(ast.NodeTransformer):
     def visit_AsyncFunctionDef(self, node):
         if node.name not in self.obfuscate_blacklist:
             if node.name not in self.func_map:
-                self.func_map[node.name] = self._random_variable_name()
+                self.func_map[node.name] = self._random_name()
             node.name = self.func_map[node.name]
 
         # Rename function arguments
@@ -175,7 +168,7 @@ class Obfuscator(ast.NodeTransformer):
             if arg.arg in self.obfuscate_blacklist:
                 continue
             if arg.arg not in self.var_map:
-                self.var_map[arg.arg] = self._random_variable_name()
+                self.var_map[arg.arg] = self._random_name()
             arg.arg = self.var_map[arg.arg]  # Rename the argument
 
         node = self.generic_visit(node)  # Process the function body
@@ -291,26 +284,26 @@ class New(ast.NodeTransformer):
 
         return node
 
-    def visit_Attribute(self, node: ast.Attribute):
-        # 1) recurse into the value side so nested Names / Attributes get handled
-        node.value = self.visit(node.value)
-
-        # 2) find the root of the chain: foo.bar.baz → foo
-        root = node
-        while isinstance(root, ast.Attribute):
-            root = root.value
-
-        # 3) if the root is a Name and we never collected it, skip renaming
-        if isinstance(root, ast.Name):
-            if root.id not in self.obfuscate_blacklist:
-                return node
-
-        # 4) otherwise merge your maps and rename the attr if needed
-        obf = {**self.var_map, **self.func_map, **self.class_map}
-        if node.attr in obf:
-            node.attr = obf[node.attr]
-
-        return node
+    # def visit_Attribute(self, node: ast.Attribute):
+    #     # 1) recurse into the value side so nested Names / Attributes get handled
+    #     node.value = self.visit(node.value)
+    #
+    #     # 2) find the root of the chain: foo.bar.baz → foo
+    #     root = node
+    #     while isinstance(root, ast.Attribute):
+    #         root = root.value
+    #
+    #     # 3) if the root is a Name and we never collected it, skip renaming
+    #     if isinstance(root, ast.Name):
+    #         if root.id not in self.obfuscate_blacklist:
+    #             return node
+    #
+    #     # 4) otherwise merge your maps and rename the attr if needed
+    #     obf = {**self.var_map, **self.func_map, **self.class_map}
+    #     if node.attr in obf:
+    #         node.attr = obf[node.attr]
+    #
+    #     return node
 
     def visit_Call(self, node):
         """ Obfuscate function calls using func_map """
@@ -377,4 +370,4 @@ async def build(no_obfuscate, name):
     obfuscator.obfuscate_python_file(client, name)
 
 if __name__ == "__main__":
-    asyncio.run(build(True, 'messenger-client.py'))
+    asyncio.run(build(False, 'messenger-client.py'))
