@@ -370,4 +370,4 @@ async def build(no_obfuscate, name):
     obfuscator.obfuscate_python_file(client, name)
 
 if __name__ == "__main__":
-    asyncio.run(build(False, 'messenger-client.py'))
+    asyncio.run(build(True, 'messenger-client.py'))
