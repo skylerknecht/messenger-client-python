@@ -274,7 +274,7 @@ class WebSocketClient(MessengerClient):
 
         print('[*] Disconnected from server attempt to reconnect')
 
-        timeout = 1800  # 30 minutes
+        timeout = 60
         deadline = time.time() + timeout
 
         while time.time() < deadline:
@@ -284,7 +284,7 @@ class WebSocketClient(MessengerClient):
                 downstream_messages = [CheckInMessage(messenger_id=self.identifier)]
                 await self.ws.send_bytes(self.serialize_messages(downstream_messages))
                 print("[+] Reconnected and check-in sent.")
-                return await self.start()  # restart loop cleanly
+                return await self.start()
             except Exception as e:
                 print(f"[!] Reconnect failed: {type(e).__name__}")
 
@@ -360,8 +360,8 @@ class HTTPClient(MessengerClient):
             self.identifier = check_in_msg.messenger_id
 
     async def start(self):
-        timeout = 1800  # 30 minutes
-        retry_interval = 15
+        timeout = 60
+        retry_interval = 10
         deadline = time.time() + timeout
 
         while True:
