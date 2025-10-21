@@ -1,4 +1,5 @@
 import asyncio
+import argparse
 import base64
 import errno
 import hashlib
@@ -502,7 +503,6 @@ class Client:
 
     async def start(self):
         while True:
-            print('checkin')
             to_send = [CheckInMessage(messenger_id=self.identifier)]
             while not self.downstream_messages.empty():
                 to_send.append(await self.downstream_messages.get())
@@ -518,7 +518,7 @@ class Client:
             messages = self.deserialize_messages(resp)
             for message in messages:
                 asyncio.create_task(self.handle_message(message))
-            await asyncio.sleep(2.0)
+            await asyncio.sleep(0.1)
 
     async def handle_message(self, message):
         if isinstance(message, InitiateForwarderClientReq):
@@ -632,6 +632,7 @@ class Client:
     async def send_downstream_message(self, downstream_message):
         await self.downstream_messages.put(downstream_message)
 
+
 class RemotePortForwarder:
     def __init__(self, messenger, config):
         self.messenger = messenger
@@ -665,14 +666,35 @@ class RemotePortForwarder:
             return
         print(f'{self.name} {self.identifier} is listening on {self.listening_host}:{self.listening_port}')
 
+def parse_args():
+    parser = argparse.ArgumentParser(description="Messenger Client Runner")
+
+    parser.add_argument("--server", default=None)
+    parser.add_argument("--encryption-key", default=None)
+    parser.add_argument("--user-agent", default=None)
+    parser.add_argument("--proxy", default=None)
+    parser.add_argument("--remote-port-forwards", nargs="*", default=None)
+
+    return parser.parse_args()
+
+DEFAULT_SERVER = "http://127.0.0.1:8081"
+DEFAULT_ENCRYPTION_KEY = "skyler"
+DEFAULT_USER_AGENT = "help"
+DEFAULT_PROXY = ""
+DEFAULT_REMOTE_PORT_FORWARDS = []
+
 async def main():
-    client = Client(
-        "http://127.0.0.1:8081/socketio/?EIO=4&transport=polling",
-        generate_hash("skyler"),
-        "help",
-        "",
-        []
-    )
+    args = parse_args()
+
+    server = args.server or DEFAULT_SERVER
+    server = server.strip('/') + '/socketio/?EIO=4&transport=polling'
+    encryption_key = generate_hash(args.encryption_key or DEFAULT_ENCRYPTION_KEY)
+    user_agent = args.user_agent or DEFAULT_USER_AGENT
+    proxy = args.proxy or DEFAULT_PROXY
+    remote_port_forwards = args.remote_port_forwards or DEFAULT_REMOTE_PORT_FORWARDS
+
+    client = Client(server, encryption_key, user_agent, proxy, remote_port_forwards)
+
     await client.connect()
     await client.start()
 
