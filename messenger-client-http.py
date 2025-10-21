@@ -1,4 +1,3 @@
-import aiohttp
 import asyncio
 import base64
 import errno
@@ -12,6 +11,8 @@ import socket
 import string
 
 from collections import namedtuple
+from urllib import request
+from urllib.error import HTTPError, URLError
 
 def generate_hash(hash_input: str) -> bytes:
     hasher = hashlib.sha256()
@@ -441,13 +442,20 @@ class Client:
         self.encryption_key = encryption_key
         self.headers = {'User-Agent': user_agent}
         self.proxy = proxy
-        self.session = aiohttp.ClientSession(headers=self.headers)
         self.ssl_context = ssl.create_default_context()
         self.ssl_context.check_hostname = False
         self.ssl_context.verify_mode = ssl.CERT_NONE
         self.identifier = ''
         self.forwarder_clients = {}
+        self.downstream_messages = asyncio.Queue()
         self.remote_port_forwards = remote_port_forwards
+        proxy_handler = request.ProxyHandler({
+            'http': proxy,
+            'https': proxy
+        } if proxy else {})
+
+        https_handler = request.HTTPSHandler(context=self.ssl_context)
+        self.opener = request.build_opener(proxy_handler, https_handler)
 
     def deserialize_messages(self, data: bytes):
         messages = []
@@ -471,29 +479,46 @@ class Client:
             remote_forward = RemotePortForwarder(self, remote_port_forward)
             await remote_forward.start()
 
+    def _blocking_http_req(self, req, timeout = 10.0):
+        with self.opener.open(req, timeout=timeout) as resp:
+            assert getattr(resp, "status", None) == 200, "[*] Non-200 response during initial connection, exiting"
+            return resp.read()
+
     async def connect(self):
         await self.start_remote_port_forwards(self.remote_port_forwards)
-        self.ws = await self.session.ws_connect(
+        downstream_messages = [CheckInMessage(messenger_id='')]
+        req = request.Request(
             self.server_endpoint,
-            ssl=self.ssl_context,
-            proxy=self.proxy
+            headers=self.headers,
+            data=self.serialize_messages(downstream_messages)
         )
-
-        check_in_msg = self.serialize_messages([CheckInMessage(messenger_id='')])
-        await self.ws.send_bytes(check_in_msg)
-
-        msg = await self.ws.receive()
-        messages = self.deserialize_messages(msg.data)
+        loop = asyncio.get_event_loop()
+        resp = await loop.run_in_executor(None, self._blocking_http_req, req, 10.0)
+        messages = self.deserialize_messages(resp)
         check_in_msg = messages[0]
-        assert isinstance(check_in_msg, CheckInMessage), f"Expected CheckInMessage, got {type(check_in_msg)}"
+        assert isinstance(check_in_msg, CheckInMessage), "[*] Expected CheckInMessage, got something else"
         self.identifier = check_in_msg.messenger_id
-        print(f'Connected to {self.server_endpoint}')
+        print(f'[+] Connected to {self.server_endpoint}')
 
     async def start(self):
-        async for msg in self.ws:
-            messages = self.deserialize_messages(msg.data)
+        while True:
+            print('checkin')
+            to_send = [CheckInMessage(messenger_id=self.identifier)]
+            while not self.downstream_messages.empty():
+                to_send.append(await self.downstream_messages.get())
+
+            req = request.Request(
+                self.server_endpoint,
+                headers=self.headers,
+                data=self.serialize_messages(to_send)
+            )
+
+            loop = asyncio.get_event_loop()
+            resp = await loop.run_in_executor(None, self._blocking_http_req, req, 10.0)
+            messages = self.deserialize_messages(resp)
             for message in messages:
                 asyncio.create_task(self.handle_message(message))
+            await asyncio.sleep(2.0)
 
     async def handle_message(self, message):
         if isinstance(message, InitiateForwarderClientReq):
@@ -605,8 +630,7 @@ class Client:
         return data
 
     async def send_downstream_message(self, downstream_message):
-        downstream_messages = [CheckInMessage(messenger_id=self.identifier), downstream_message]
-        await self.ws.send_bytes(self.serialize_messages(downstream_messages))
+        await self.downstream_messages.put(downstream_message)
 
 class RemotePortForwarder:
     def __init__(self, messenger, config):
@@ -643,7 +667,7 @@ class RemotePortForwarder:
 
 async def main():
     client = Client(
-        "ws://127.0.0.1:8081/socketio/?EIO=4&transport=websocket",
+        "http://127.0.0.1:8081/socketio/?EIO=4&transport=polling",
         generate_hash("skyler"),
         "help",
         "",
