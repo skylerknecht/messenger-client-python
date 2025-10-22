@@ -607,6 +607,7 @@ class Client:
     async def send_downstream_message(self, downstream_message):
         downstream_messages = [CheckInMessage(messenger_id=self.identifier), downstream_message]
         await self.ws.send_bytes(self.serialize_messages(downstream_messages))
+        await asyncio.sleep(0.1)
 
 class RemotePortForwarder:
     def __init__(self, messenger, config):

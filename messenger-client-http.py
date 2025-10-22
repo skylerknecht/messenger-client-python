@@ -504,8 +504,10 @@ class Client:
     async def start(self):
         while True:
             to_send = [CheckInMessage(messenger_id=self.identifier)]
-            while not self.downstream_messages.empty():
-                to_send.append(await self.downstream_messages.get())
+            for _ in range(5):
+                 if self.downstream_messages.empty():
+                     break
+                 to_send.append(await self.downstream_messages.get())
 
             req = request.Request(
                 self.server_endpoint,
