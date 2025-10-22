@@ -512,7 +512,6 @@ class Client:
             if not forwarder_client:
                 return
             forwarder_client.writer.write(message.data)
-
         else:
             print(f"Received unknown message type: {type(message).__name__}")
 
@@ -653,8 +652,8 @@ def parse_args():
 
     return parser.parse_args()
 
-DEFAULT_SERVER = "http://127.0.0.1:8081"
-DEFAULT_ENCRYPTION_KEY = "skyler"
+DEFAULT_SERVER = "http://127.0.0.1:9090"
+DEFAULT_ENCRYPTION_KEY = "lol"
 DEFAULT_USER_AGENT = "help"
 DEFAULT_PROXY = ""
 DEFAULT_REMOTE_PORT_FORWARDS = []
@@ -686,4 +685,11 @@ def run_coro_in_thread(coro):
         loop.run_until_complete(loop.shutdown_asyncgens())
         loop.close()
 
-run_coro_in_thread(main())
+
+#run_coro_in_thread(main())
+loop = asyncio.new_event_loop()
+asyncio.set_event_loop(loop)
+try:
+    loop.run_until_complete(main())
+except KeyboardInterrupt:
+    print('\rShutdown')

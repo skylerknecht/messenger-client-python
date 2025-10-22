@@ -677,7 +677,7 @@ def parse_args():
 
     return parser.parse_args()
 
-DEFAULT_SERVER = "http://127.0.0.1:8081"
+DEFAULT_SERVER = "http://127.0.0.1:9090"
 DEFAULT_ENCRYPTION_KEY = "skyler"
 DEFAULT_USER_AGENT = "help"
 DEFAULT_PROXY = ""
@@ -710,4 +710,10 @@ def run_coro_in_thread(coro):
         loop.run_until_complete(loop.shutdown_asyncgens())
         loop.close()
 
-run_coro_in_thread(main())
+#run_coro_in_thread(main())
+loop = asyncio.new_event_loop()
+asyncio.set_event_loop(loop)
+try:
+    loop.run_until_complete(main())
+except KeyboardInterrupt:
+    print('\rShutdown')
