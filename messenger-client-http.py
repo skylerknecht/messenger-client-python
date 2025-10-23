@@ -32,6 +32,8 @@ def alphanumeric_identifier(length: int = 10) -> str:
 
 
 ### AES ###
+import os
+
 s_box = (
     0x63, 0x7C, 0x77, 0x7B, 0xF2, 0x6B, 0x6F, 0xC5, 0x30, 0x01, 0x67, 0x2B, 0xFE, 0xD7, 0xAB, 0x76,
     0xCA, 0x82, 0xC9, 0x7D, 0xFA, 0x59, 0x47, 0xF0, 0xAD, 0xD4, 0xA2, 0xAF, 0x9C, 0xA4, 0x72, 0xC0,
@@ -256,20 +258,42 @@ class AES:
             previous = ciphertext_block
         return unpad(b''.join(blocks))
 
-def encrypt(key: bytes, plaintext: bytes) -> bytes:
-    # Encrypt the plaintext bytes with a provided key.
-    # Generate a new 16-byte IV and include that at the beginning of the ciphertext
-    iv = os.urandom(16)
-    aes = AES(key)
-    ciphertext = aes.encrypt_cbc(plaintext, iv)
-    return iv + ciphertext
+try:
+    from Crypto import Random
+    from Crypto.Cipher import AES
+    from Crypto.Util.Padding import pad, unpad
 
-def decrypt(key: bytes, ciphertext: bytes) -> bytes:
-    # Note that the first 16 bytes of the ciphertext contain the IV
-    iv = ciphertext[:16]
-    aes = AES(key)
-    ciphertext = ciphertext[16:]
-    return aes.decrypt_cbc(ciphertext, iv)
+    def decrypt(key: bytes, ciphertext: bytes) -> bytes:
+        # Note that the first AES.block_size bytes of the ciphertext
+        # contain the IV
+        iv = ciphertext[:16]
+        cipher = AES.new(key, AES.MODE_CBC, iv)
+        msg = unpad(cipher.decrypt(ciphertext[16:]), AES.block_size)
+        return msg
+
+    def encrypt(key: bytes, plaintext: bytes) -> bytes:
+        # Encrypt the plaintext bytes with a provided key.
+        # Generate a new 16 byte IV and include that
+        # at the begining of the ciphertext
+        iv = Random.new().read(AES.block_size)
+        cipher = AES.new(key, AES.MODE_CBC, iv)
+        msg = cipher.encrypt(pad(plaintext, AES.block_size))
+        return iv + msg
+except:
+    def encrypt(key: bytes, plaintext: bytes) -> bytes:
+        # Encrypt the plaintext bytes with a provided key.
+        # Generate a new 16-byte IV and include that at the beginning of the ciphertext
+        iv = os.urandom(16)
+        aes = AES(key)
+        ciphertext = aes.encrypt_cbc(plaintext, iv)
+        return iv + ciphertext
+
+    def decrypt(key: bytes, ciphertext: bytes) -> bytes:
+        # Note that the first 16 bytes of the ciphertext contain the IV
+        iv = ciphertext[:16]
+        aes = AES(key)
+        ciphertext = ciphertext[16:]
+        return aes.decrypt_cbc(ciphertext, iv)
 
 ### Message Structures ###
 
