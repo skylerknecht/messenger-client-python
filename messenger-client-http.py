@@ -704,7 +704,7 @@ def parse_args():
     return parser.parse_args()
 
 DEFAULT_SERVER = "http://127.0.0.1:9090"
-DEFAULT_ENCRYPTION_KEY = "skyler"
+DEFAULT_ENCRYPTION_KEY = "lol"
 DEFAULT_USER_AGENT = "help"
 DEFAULT_PROXY = ""
 DEFAULT_REMOTE_PORT_FORWARDS = []

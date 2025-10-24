@@ -16,7 +16,6 @@ from Crypto import Random
 from Crypto.Cipher import AES
 from Crypto.Util.Padding import pad, unpad
 
-
 def generate_hash(hash_input: str) -> bytes:
     hasher = hashlib.sha256()
     hash_input = hash_input.encode('utf-8')
