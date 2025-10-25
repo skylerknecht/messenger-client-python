@@ -692,6 +692,7 @@ class HTTPClient:
         loop = asyncio.get_event_loop()
         resp = await loop.run_in_executor(None, self._blocking_http_req, req, 10.0)
         messages = self.deserialize_messages(resp)
+        assert len(messages) > 0, f"[*] Invalid response from server:\n{resp}"
         check_in_msg = messages[0]
         assert isinstance(check_in_msg, CheckInMessage), "[*] Expected CheckInMessage, got something else"
         self.identifier = check_in_msg.messenger_id
