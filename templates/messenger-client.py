@@ -589,7 +589,6 @@ class Client:
             if not forwarder_client:
                 return
             if message.reason != 0:
-                print("reason zero")
                 forwarder_client.writer.close()
                 await forwarder_client.writer.wait_closed()
                 self.forwarder_clients.pop(message.forwarder_client_id, None)
@@ -601,7 +600,7 @@ class Client:
                 return
             forwarder_client.writer.write(message.data)
         else:
-            print(f"Received unknown message type: {type(message).__name__}")
+            print(f"[!] Received unknown message type: {type(message).__name__}")
 
     async def connect(self):
         raise NotImplementedError
@@ -614,7 +613,7 @@ class Client:
 
 class WSClient(Client):
     def __init__(self, server_url, encryption_key, messenger_id, user_agent, proxy):
-        super.__init__(encryption_key)
+        super().__init__(encryption_key)
         self.server_url = server_url
         self.headers = {'User-Agent': user_agent}
         self.proxy = proxy
@@ -633,14 +632,15 @@ class WSClient(Client):
         check_in_msg = self.serialize_messages([CheckInMessage(messenger_id=self.identifier)])
         await self.ws.send_bytes(check_in_msg)
         if self.identifier:
+            print(f'[+] Connected to {self.server_url}')
             return
         msg = await self.ws.receive()
         messages = self.deserialize_messages(msg.data)
-        assert len(messages) > 0, f"[*] Invalid response from server:\n{msg.data}"
+        assert len(messages) > 0, f"[!] Invalid response from server:\n{msg.data}"
         check_in_msg = messages[0]
-        assert isinstance(check_in_msg, CheckInMessage), f"Expected CheckInMessage, got {type(check_in_msg)}"
+        assert isinstance(check_in_msg, CheckInMessage), f"[!] Expected CheckInMessage, got {type(check_in_msg)}"
         self.identifier = check_in_msg.messenger_id
-        print(f'Connected to {self.server_url}')
+        print(f'[+] Connected to {self.server_url}')
 
     async def start(self):
         async for msg in self.ws:
@@ -651,7 +651,6 @@ class WSClient(Client):
     async def send_downstream_message(self, downstream_message):
         downstream_messages = [CheckInMessage(messenger_id=self.identifier), downstream_message]
         await self.ws.send_bytes(self.serialize_messages(downstream_messages))
-        print(len(self.forwarder_clients))
 
 class HTTPClient(Client):
     def __init__(self, server_url, encryption_key, messenger_id, user_agent, proxy):
@@ -688,6 +687,7 @@ class HTTPClient(Client):
         loop = asyncio.get_event_loop()
         resp = await loop.run_in_executor(None, self._blocking_http_req, req, 10.0)
         if self.identifier:
+            print(f'[+] Connected to {self.server_url}')
             return
         messages = self.deserialize_messages(resp)
         assert len(messages) > 0, f"[*] Invalid response from server:\n{resp}"
@@ -719,7 +719,6 @@ class HTTPClient(Client):
 
     async def send_downstream_message(self, downstream_message):
         await self.downstream_messages.put(downstream_message)
-        print(len(self.forwarder_clients))
 
 class RemotePortForwarder:
     def __init__(self, messenger, config):
@@ -750,9 +749,9 @@ class RemotePortForwarder:
         try:
             await asyncio.start_server(self.handle_client, self.listening_host, int(self.listening_port))
         except OSError:
-            print(f'{self.listening_host}:{self.listening_port} is already in use.')
+            print(f'[!] {self.listening_host}:{self.listening_port} is already in use.')
             return
-        print(f'{self.name} {self.identifier} is listening on {self.listening_host}:{self.listening_port}')
+        print(f'[+] {self.name} {self.identifier} is listening on {self.listening_host}:{self.listening_port}')
 
 ## Arg Parsing
 
@@ -801,6 +800,9 @@ async def main():
         else RETRY_ATTEMPTS
     )
 
+    if proxy and not proxy.startswith('http'):
+        proxy = f'http://{proxy}'
+
     if server_url.startswith('ws') and ws:
         server_url = server_url.strip('/').replace('ws', 'http') + '/socketio/?EIO=4&transport=websocket'
         client = WSClient(server_url, encryption_key, messenger_id, user_agent, proxy)
@@ -829,9 +831,14 @@ async def main():
             attempts = 0
             await client.start()
         except Exception as e:
-            print(f"[!] Exception occurred:")
-            print(e)
             never_disconnected = False
+
+            exc_type = type(e)
+            tb = e.__traceback__
+            filename = tb.tb_frame.f_code.co_filename
+            line_no = tb.tb_lineno
+
+            print(f"[!] Exception Occurred: {exc_type.__module__}.{exc_type.__name__} at {filename}:{line_no}")
 
             attempts += 1
             if retry_attempts == 0:
