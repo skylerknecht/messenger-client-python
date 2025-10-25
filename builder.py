@@ -1,37 +1,66 @@
+import argparse
+from pathlib import Path
+from jinja2 import Environment, FileSystemLoader, select_autoescape
+
+USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36"
+
 def add_arguments(parser):
-    # --- Client configuration ---
-    cfg = parser.add_argument_group("Client configuration")
-    cfg.add_argument("-l", "--language",
-                     choices=["python", "csharp", "node", "ruby"],
-                     help="Client language to build.")
-    cfg.add_argument("--server-url",
-                     help="Server URL the client should connect to.")
-    cfg.add_argument("-e", "--encryption-key", default=None,
-                     help="AES encryption key to embed (optional).")
-    cfg.add_argument("--messenger-id", default=None,
-                     help="Hardcoded messenger/client ID (optional).")
-    cfg.add_argument("--user-agent", default=None,
-                     help="Custom HTTP/WebSocket User-Agent string (optional).")
-    cfg.add_argument(
-        "--remote-port-forwards",
-        metavar="str",
-        help=("Comma-separated LOCAL_IP:LOCAL_PORT:REMOTE_IP:REMOTE_PORT\n"
-              "Example: 0.0.0.0:9001:127.0.0.1:22,10.0.0.5:8080:192.168.1.10:80")
+    builder = parser.add_argument_group("Builder options")
+    builder.add_argument("--name", default="client.py",
+                     help="Name of the output.")
+    builder.add_argument(
+        "--non-main-thread",
+        action="store_true",
+        help="Run client from a non-main thread destination (not CTRL+C-safe for websockets)",
     )
 
-    # --- Retry behavior ---
+    cfg = parser.add_argument_group("Client configuration")
+    cfg.add_argument("--server-url", default="http://localhost:8080",
+                     help="Server URL the client should connect to.")
+    cfg.add_argument("-e", "--encryption-key", default="",
+                     help="AES encryption key to embed (optional).")
+    cfg.add_argument("--messenger-id", default="",
+                     help="Hardcoded Messenger ID (optional).")
+    cfg.add_argument("--user-agent", default=USER_AGENT,
+                     help="Custom HTTP/WebSocket User-Agent string (optional).")
+    cfg.add_argument("--proxy", default="",
+                     help="Proxy to use (optional).")
+    cfg.add_argument("--remote-port-forwards", nargs="*", default=[],
+                     help="Space delimited remote port forwards LISTENING-IP:LISTENING-PORT:REMOTE-IP:REMOTE-PORT (optional).")
+
     retry = parser.add_argument_group("Retry behavior")
-    retry.add_argument("--retry-duration", type=float, default=1.0,
-                       help="Seconds to wait between retry attempts.")
+    retry.add_argument("--retry-duration", type=float, default=60.0,
+                       help="Total time to retry connecting.")
     retry.add_argument("--retry-attempts", type=int, default=5,
                        help="Number of retry attempts before giving up.")
 
-    # --- Advanced ---
-    adv = parser.add_argument_group("Advanced (repository)")
-    adv.add_argument("--update-submodules", action="store_true",
-                     help="Update git submodules before building.")
-    adv.add_argument("--submodule-branch", default="main",
-                     help="Branch to checkout in each submodule.")
 
 def build(args):
-    pass
+    template_name = "messenger-client.py"
+
+    template_dir = Path(__file__).resolve().parent / "templates"
+    if not template_dir.is_dir():
+        raise RuntimeError(f"Template directory not found: {template_dir}")
+
+    env = Environment(
+        loader=FileSystemLoader(str(template_dir)),
+        autoescape=select_autoescape(enabled_extensions=("j2",)),
+        trim_blocks=True,
+        lstrip_blocks=True,
+    )
+
+    template = env.get_template(template_name)
+
+    rendered = template.render(**vars(args))
+
+    out_path = Path(args.name)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(rendered, encoding="utf-8")
+
+    print("Wrote Python client to '{}'".format(out_path))
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(usage=argparse.SUPPRESS)
+    add_arguments(parser)
+    parsed_args = parser.parse_args()
+    build(parsed_args)

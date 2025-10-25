@@ -527,6 +527,7 @@ class Client:
 
     async def start(self):
         while True:
+            print('lol')
             to_send = [CheckInMessage(messenger_id=self.identifier)]
             for _ in range(5):
                  if self.downstream_messages.empty():
@@ -703,7 +704,7 @@ def parse_args():
 
     return parser.parse_args()
 
-DEFAULT_SERVER = "http://127.0.0.1:9090"
+DEFAULT_SERVER = "http://127.0.0.1:8080"
 DEFAULT_ENCRYPTION_KEY = "lol"
 DEFAULT_USER_AGENT = "help"
 DEFAULT_PROXY = ""
