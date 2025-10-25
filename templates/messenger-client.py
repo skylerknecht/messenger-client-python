@@ -469,7 +469,7 @@ class MessageBuilder:
 ## Clients
 
 class WSClient:
-    def __init__(self, server_url, encryption_key, messenger_id, user_agent, proxy, retry_duration, retry_attempts):
+    def __init__(self, server_url, encryption_key, messenger_id, user_agent, proxy):
         self.server_url = server_url
         self.encryption_key = encryption_key
         self.headers = {'User-Agent': user_agent}
@@ -913,10 +913,10 @@ async def main():
 
     if server_url.startswith('ws') and ws:
         server_url = server_url.strip('/').replace('ws', 'http') + '/socketio/?EIO=4&transport=websocket'
-        client = WSClient(server_url, encryption_key, messenger_id, user_agent, proxy, retry_duration, retry_attempts)
+        client = WSClient(server_url, encryption_key, messenger_id, user_agent, proxy)
     elif server_url.startswith('http'):
         server_url = server_url.strip('/') + '/socketio/?EIO=4&transport=polling'
-        client = HTTPClient(server_url, encryption_key, messenger_id, user_agent, proxy, retry_duration, retry_attempts)
+        client = HTTPClient(server_url, encryption_key, messenger_id, user_agent, proxy)
     else:
         print('[*] No suitable clients identified, shutting down.')
         sys.exit(0)
