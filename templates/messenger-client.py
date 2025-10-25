@@ -861,6 +861,7 @@ def run_coro_in_thread(coro):
 {% endif %}
 
 {% if non_main_thread %}
+
 try:
     run_coro_in_thread(main())
 except KeyboardInterrupt:

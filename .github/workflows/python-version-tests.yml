@@ -1,0 +1,60 @@
+name: Python Version Tests
+on: [push, pull_request]
+
+jobs:
+  test-legacy:
+    name: Older
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - python-version: '3.6'
+            container: 'python:3.6-buster'
+          - python-version: '3.7'
+            container: 'python:3.7-buster'
+    container: ${{ matrix.container }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install deps (if requirements.txt exists)
+        run: |
+          if [ -f requirements.txt ]; then
+            python -m pip install -r requirements.txt
+          fi
+
+      - name: Run builder and client
+        shell: bash
+        run: |
+          python builder.py
+          python client.py -h 
+
+  test-modern:
+    name: Modern
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.8','3.9','3.10','3.11','3.12','3.13']
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install deps (if requirements.txt exists)
+        run: |
+          if [ -f requirements.txt ]; then
+            python -m pip install -r requirements.txt
+          fi
+
+      - name: Run builder and client
+        shell: bash
+        run: |
+          python builder.py
+          python client.py -h
