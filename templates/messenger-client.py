@@ -478,7 +478,7 @@ class WSClient:
         self.ssl_context = ssl.create_default_context()
         self.ssl_context.check_hostname = False
         self.ssl_context.verify_mode = ssl.CERT_NONE
-        self.identifier = ''
+        self.identifier = messenger_id
         self.forwarder_clients = {}
 
     def deserialize_messages(self, data: bytes):
@@ -506,7 +506,7 @@ class WSClient:
             proxy=self.proxy
         )
 
-        check_in_msg = self.serialize_messages([CheckInMessage(messenger_id='')])
+        check_in_msg = self.serialize_messages([CheckInMessage(messenger_id=self.identifier)])
         await self.ws.send_bytes(check_in_msg)
 
         msg = await self.ws.receive()
@@ -636,7 +636,7 @@ class WSClient:
         await self.ws.send_bytes(self.serialize_messages(downstream_messages))
 
 class HTTPClient:
-    def __init__(self, server_url, encryption_key, messenger_id, user_agent, proxy, retry_duration, retry_attempts):
+    def __init__(self, server_url, encryption_key, messenger_id, user_agent, proxy):
         self.server_url = server_url
         self.encryption_key = encryption_key
         self.headers = {'User-Agent': user_agent}
@@ -644,7 +644,7 @@ class HTTPClient:
         self.ssl_context = ssl.create_default_context()
         self.ssl_context.check_hostname = False
         self.ssl_context.verify_mode = ssl.CERT_NONE
-        self.identifier = ''
+        self.identifier = messenger_id
         self.forwarder_clients = {}
         self.downstream_messages = asyncio.Queue()
         proxy_handler = request.ProxyHandler({
@@ -683,7 +683,7 @@ class HTTPClient:
             return resp.read()
 
     async def connect(self):
-        downstream_messages = [CheckInMessage(messenger_id='')]
+        downstream_messages = [CheckInMessage(messenger_id=self.identifier)]
         req = request.Request(
             self.server_url,
             headers=self.headers,
@@ -920,7 +920,6 @@ async def main():
     else:
         print('[*] No suitable clients identified, shutting down.')
         sys.exit(0)
-    print(remote_port_forwards)
     remote_forwards = []
     for remote_port_forward in remote_port_forwards:
         remote_forward = RemotePortForwarder(client, remote_port_forward)
