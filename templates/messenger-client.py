@@ -505,10 +505,10 @@ class WSClient:
             ssl=self.ssl_context,
             proxy=self.proxy
         )
-
         check_in_msg = self.serialize_messages([CheckInMessage(messenger_id=self.identifier)])
         await self.ws.send_bytes(check_in_msg)
-
+        if self.identifier:
+            return
         msg = await self.ws.receive()
         messages = self.deserialize_messages(msg.data)
         assert len(messages) > 0, f"[*] Invalid response from server:\n{msg.data}"
@@ -691,6 +691,8 @@ class HTTPClient:
         )
         loop = asyncio.get_event_loop()
         resp = await loop.run_in_executor(None, self._blocking_http_req, req, 10.0)
+        if self.identifier:
+            return
         messages = self.deserialize_messages(resp)
         assert len(messages) > 0, f"[*] Invalid response from server:\n{resp}"
         check_in_msg = messages[0]
