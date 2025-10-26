@@ -799,7 +799,6 @@ async def main():
     if proxy and not proxy.startswith('http'):
         proxy = f'http://{proxy}'
 
-    print(encryption_key)
     if not encryption_key:
         print('[!] No encryption key provided.')
 

@@ -45,7 +45,7 @@ the hardcoded options. Those options and their definitions are shown below.
 |-----------------------------------------------|---------------------------|------------------------|
 | [Server URL](#server-url)                     | `--server-url`            | ws://localhost:8080    |
 | [Encryption Key](#encryption-key)             | `--encryption-key`        | None                   |
-| [User Agent](#user-agent)                     | `--user-agent`            | None                   |
+| [User Agent](#user-agent)                     | `--user-agent`            | [Specified Here](https://github.com/skylerknecht/messenger-client-python/blob/808dbf7c765b6f7e3d69b155e711e9b92b631fe2/builder.py#L5)
 | [Proxy](#proxy)                               | `--proxy`                 | None                   |
 | [Remote Port Forwards](#remote-port-forwards) | `--remote-port-forwards`  | None                   |
 | [Retry Duration](#retry-duration)             | `--retry-duration`        | One Minute             |
