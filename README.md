@@ -41,7 +41,8 @@ the hardcoded options. Those options and their definitions can be seen below.
 
 ### Client Options
 
-#### Server URL
+#### Server URL 
+*Default: ws://localhost:8080*
 
 Once the Messenger Server is running the operator will be provided a sever url that can be provided here. 
 
