@@ -6,15 +6,6 @@
 
 The Client is a cross-platform compatible Messenger Client supporting Python v3.6+.
 
-## Quick Start
-
-```
-operator~# ./builder.py --encryption-key test
-Wrote Python client to 'client.py'
-operator~# ./client.py 
-[+] Connected to http://localhost:8080/socketio/?EIO=4&transport=websocket
-```
-
 ## Primary Capabilities
 
 | Capability                 | Support Status                                         |
@@ -30,6 +21,15 @@ operator~# ./client.py
 | Capability                    | Support Status                                                                                          |
 |-------------------------------|---------------------------------------------------------------------------------------------------------|
 | Multi-Threaded Deploy-ability | Provide `--non-main-thread` to the builder script if the client is not meant to run in the main thread. |
+
+## Quick Start
+
+```
+operator~# ./builder.py --encryption-key test
+Wrote Python client to 'client.py'
+operator~# ./client.py 
+[+] Connected to http://localhost:8080/socketio/?EIO=4&transport=websocket
+```
 
 ## Usage
 
@@ -97,8 +97,47 @@ builder.py --proxy http://user:password@localhost:8080
 
 #### Remote Port Forwards
 
+Messenger expects clients to attempt to set up remote port forwards on the client side. The operator can specify multiple port forwards 
+with the schema `LISTENING-HOST:LISTENING-PORT:DESTINATION-HOST:DESTINATION-PORT`. 
 
+```
+builder.py --remote-port-forwards localhost:8080:remotehost:8080
+```
+
+This will forward all local connections on 8080 to a remote host on 8080. Given that the operator has not permitted the connection server-side, 
+they will see the following message.
+
+```
+[!] Messenger `test` has no Remote Port Forwarder configured for remotehost:8080, denying forward!
+```
 
 #### Retry Duration
 
+Clients will disconnect for various reasons. Given that the client does not completely exit, it will attempt to reconnect. Operators can 
+control how long the client will attempt to reconnect by specifying a retry duration. This value is expected to be in seconds. For example,
+if the retry duration is set to 120, then the client will attempt to reconnect for two minutes. 
+
+```
+builder.py --retry-duration 100
+```
+
+To disable reconnection attempts, set the retry attempts option to 0. 
+
 #### Retry Attempts
+
+In combination with the retry duration, retry attempts determine the minimum time the client waits between reconnection attempts. 
+
+```
+builder.py --retry-attempts 100
+```
+
+#### Name
+
+The build process outputs an artifact, and operators can control its name.
+
+```
+builder.py --name output.py
+```
+
+
+
