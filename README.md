@@ -2,11 +2,11 @@
 
 ![CI](https://img.shields.io/github/actions/workflow/status/skylerknecht/messenger-client-python/python-version-tests.yml?branch=main&label=Python%20Version%20Tests)
 
-### Overview
+## Overview
 
 The Client is a cross-platform compatible Messenger Client supporting Python v3.6+.
 
-### Quick Start
+## Quick Start
 
 ```
 operator~# ./builder.py --encryption-key test
@@ -15,7 +15,7 @@ operator~# ./client.py
 [+] Connected to http://localhost:8080/socketio/?EIO=4&transport=websocket
 ```
 
-### Primary Capabilities
+## Primary Capabilities
 
 | Capability                 | Support Status                                         |
 |----------------------------|--------------------------------------------------------|
@@ -25,13 +25,13 @@ operator~# ./client.py
 | SOCKS5 TCP                 | Supported                                              |
 | SOCKS5 UDP                 | Not Supported                                          |
 
-### Client-Specific Capabilities
+## Client-Specific Capabilities
 
 | Capability                    | Support Status                                                                                          |
 |-------------------------------|---------------------------------------------------------------------------------------------------------|
 | Multi-Threaded Deploy-ability | Provide `--non-main-thread` to the builder script if the client is not meant to run in the main thread. | |
 
-### Usage
+## Usage
 
 To build the client execute `builder.py` or `messenger-builder` from the [Messenger Repository](https://github.com/skylerknecht/messenger).
 
@@ -39,10 +39,11 @@ Both scripts accept the same options and will generate a Python Messenger Client
 will hardcode the options into the script. Once built, the operator can specify command line arguments that will override
 the hardcoded options. Those options and their definitions can be seen below. 
 
-### Client Options
+## Client Options
 
-#### Server URL 
-*Default: ws://localhost:8080*
+### Server URL 
+**Default:** 
+ws://localhost:8080
 
 Once the Messenger Server is running the operator will be provided a sever url that can be provided here. 
 
