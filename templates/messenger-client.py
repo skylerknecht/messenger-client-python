@@ -32,7 +32,6 @@ except ImportError:
 
 SERVER_URL = "{{ server_url }}"
 ENCRYPTION_KEY = "{{ encryption_key }}"
-MESSENGER_ID = "{{ messenger_id }}"
 USER_AGENT = "{{ user_agent }}"
 PROXY = "{{ proxy }}"
 REMOTE_FORWARDS = {{ remote_port_forwards }}
@@ -612,7 +611,7 @@ class Client:
         raise NotImplementedError
 
 class WSClient(Client):
-    def __init__(self, server_url, encryption_key, messenger_id, user_agent, proxy):
+    def __init__(self, server_url, encryption_key, user_agent, proxy):
         super().__init__(encryption_key)
         self.server_url = server_url
         self.headers = {'User-Agent': user_agent}
@@ -621,8 +620,7 @@ class WSClient(Client):
         self.ssl_context = ssl.create_default_context()
         self.ssl_context.check_hostname = False
         self.ssl_context.verify_mode = ssl.CERT_NONE
-        self.identifier = messenger_id
-
+        self.identifier = ''
     async def connect(self):
         self.ws = await self.session.ws_connect(
             self.server_url,
@@ -653,16 +651,16 @@ class WSClient(Client):
         await self.ws.send_bytes(self.serialize_messages(downstream_messages))
 
 class HTTPClient(Client):
-    def __init__(self, server_url, encryption_key, messenger_id, user_agent, proxy):
+    def __init__(self, server_url, encryption_key, user_agent, proxy):
         super().__init__(encryption_key)
         self.server_url = server_url
         self.encryption_key = encryption_key
         self.headers = {'User-Agent': user_agent}
         self.proxy = proxy
+        self.identifier = ''
         self.ssl_context = ssl.create_default_context()
         self.ssl_context.check_hostname = False
         self.ssl_context.verify_mode = ssl.CERT_NONE
-        self.identifier = messenger_id
         self.downstream_messages = asyncio.Queue()
         proxy_handler = request.ProxyHandler({
             'http': proxy,
@@ -766,7 +764,6 @@ def parse_args():
 
     parser.add_argument("--server-url")
     parser.add_argument("--encryption-key")
-    parser.add_argument("--messenger-id")
     parser.add_argument("--user-agent")
     parser.add_argument("--proxy")
     parser.add_argument("--remote-port-forwards", nargs="*")
@@ -781,7 +778,6 @@ async def main():
 
     server_url = args.server_url or SERVER_URL
     encryption_key = generate_hash(args.encryption_key or ENCRYPTION_KEY)
-    messenger_id = args.messenger_id or MESSENGER_ID
     user_agent = args.user_agent or USER_AGENT
     proxy = args.proxy or PROXY
     remote_port_forwards = (
@@ -803,15 +799,20 @@ async def main():
     if proxy and not proxy.startswith('http'):
         proxy = f'http://{proxy}'
 
+    print(encryption_key)
+    if not encryption_key:
+        print('[!] No encryption key provided.')
+
     if server_url.startswith('ws') and ws:
         server_url = server_url.strip('/').replace('ws', 'http') + '/socketio/?EIO=4&transport=websocket'
-        client = WSClient(server_url, encryption_key, messenger_id, user_agent, proxy)
+        client = WSClient(server_url, encryption_key, user_agent, proxy)
     elif server_url.startswith('http'):
         server_url = server_url.strip('/') + '/socketio/?EIO=4&transport=polling'
-        client = HTTPClient(server_url, encryption_key, messenger_id, user_agent, proxy)
+        client = HTTPClient(server_url, encryption_key, user_agent, proxy)
     else:
         print('[*] No suitable clients identified, shutting down.')
         sys.exit(0)
+
     remote_forwards = []
     for remote_port_forward in remote_port_forwards:
         remote_forward = RemotePortForwarder(client, remote_port_forward)

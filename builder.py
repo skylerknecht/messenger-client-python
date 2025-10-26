@@ -15,7 +15,7 @@ def add_arguments(parser):
     )
 
     cfg = parser.add_argument_group("Client configuration")
-    cfg.add_argument("--server-url", default="http://localhost:8080",
+    cfg.add_argument("--server-url", default="ws://localhost:8080",
                      help="Server URL the client should connect to.")
     cfg.add_argument("-e", "--encryption-key", default="",
                      help="AES encryption key to embed (optional).")
