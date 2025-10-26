@@ -29,30 +29,39 @@ operator~# ./client.py
 
 | Capability                    | Support Status                                                                                          |
 |-------------------------------|---------------------------------------------------------------------------------------------------------|
-| Multi-Threaded Deploy-ability | Provide `--non-main-thread` to the builder script if the client is not meant to run in the main thread. | |
+| Multi-Threaded Deploy-ability | Provide `--non-main-thread` to the builder script if the client is not meant to run in the main thread. |
 
 ## Usage
 
-To build the client execute `builder.py` or `messenger-builder` from the [Messenger Repository](https://github.com/skylerknecht/messenger).
+To build the client, execute `builder.py` or `messenger-builder` from the [Messenger Repository](https://github.com/skylerknecht/messenger).
 
 Both scripts accept the same options and will generate a Python Messenger Client. If provided options, the builder scripts
-will hardcode the options into the script. Once built, the operator can specify command line arguments that will override
-the hardcoded options. Those options and their definitions can be seen below. 
+will hard-code the options into the script. Once built, the operator can specify command-line arguments that will override
+the hardcoded options. Those options and their definitions are shown below. 
 
 ## Client Options
 
-### Server URL 
-**Default:** 
-ws://localhost:8080
+| Option                                        | Flag                      | Default Value          |
+|-----------------------------------------------|---------------------------|------------------------|
+| [Server URL](#server-url)                     | `--server-url`            | ws://localhost:8080    |
+| [Encryption Key](#encryption-key)             | `--encryption-key`        | None                   |
+| [User Agent](#user-agent)                     | `--user-agent`            | None                   |
+| [Proxy](#proxy)                               | `--proxy`                 | None                   |
+| [Remote Port Forwards](#remote-port-forwards) | `--remote-port-forwards`  | None                   |
+| [Retry Duration](#retry-duration)             | `--retry-duration`        | One Minute             |
+| [Retry Attempts](#retry-attempts)             | `--retry-attempts`        | Five                   |
+| [Name](#name)                                 | `--name`                  | client.py              |
 
-Once the Messenger Server is running the operator will be provided a sever url that can be provided here. 
+### Server URL
+
+Once the Messenger Server is running, the operator will be provided a server URL that can be set with `--server-url`. 
 
 ```
 builder.py --server-url http://localhost:8080
 ```
 
-The client will attempt to establish a connection to the server based on the protocol specified in the server url. For http leave the protocol as 
-`http://`, for websockets use `ws://`. Given the server is listening with SSL encryption provide the SSL 
+The client will attempt to establish a connection to the server based on the protocol specified in the server URL. For HTTP, leave the protocol as 
+`http://`, for websockets use `ws://`. Given that the server is listening with SSL encryption, provide the SSL 
 alternative to each protocol. 
 
 #### Encryption Key
@@ -63,9 +72,7 @@ Messenger Server will also provide an encryption key upon startup that can be ha
 builder.py --encryption-key SuP3rs_crEtk3y
 ```
 
-**Default:** None
-
-Since the server excepts encryption the default will likely cause issues, therefore the client outputs an 
+Since the server expects encryption, the default will likely cause issues; therefore, the client outputs an 
 error.
 
 ```
@@ -74,17 +81,23 @@ error.
 
 #### User Agent
 
-For http-based protocols the operator can control the user-agent header. 
+For HTTP-based protocols, the operator can control the user-agent header. 
 
 ```
 builder.py --user-agent "Test User Agent"
 ```
 
-
-
 #### Proxy
 
+Enterprise environments typically have outbound proxies. Operators can provide a proxy using the HTTP-proxy schema. 
+
+```
+builder.py --proxy http://user:password@localhost:8080
+```
+
 #### Remote Port Forwards
+
+
 
 #### Retry Duration
 
