@@ -1,4 +1,10 @@
 import argparse
+import hashlib
+import os
+import base64
+import textwrap
+
+from itertools import cycle
 from pathlib import Path
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
@@ -11,7 +17,12 @@ def add_arguments(parser):
     builder.add_argument(
         "--non-main-thread",
         action="store_true",
-        help="Run client from a non-main thread destination (not CTRL+C-safe for websockets)",
+        help="Run client from a non-main thread destination (not CTRL+C-safe for websockets).",
+    )
+    builder.add_argument(
+        "--no-obfuscate",
+        action="store_true",
+        help="Don't obfuscate the client.",
     )
 
     cfg = parser.add_argument_group("Client configuration")
@@ -52,6 +63,17 @@ def build(args):
     template = env.get_template(template_name)
 
     rendered = template.render(**vars(args))
+
+    if not args.no_obfuscate:
+        # Stole this from Medusa https://github.com/MythicAgents/Medusa/blob/cdc3127aa8d531c6477b0c36e26f4bbe540b72cc/Payload_Type/medusa/medusa/mythic/agent_functions/builder.py#L151
+        key = hashlib.md5(os.urandom(128)).hexdigest().encode()
+        encrypted_content = ''.join(chr(c ^ k) for c, k in zip(rendered.encode(), cycle(key))).encode()
+        b64_enc_content = base64.b64encode(encrypted_content)
+        xor_func = "chr(c^k)"
+        rendered = textwrap.dedent("""\
+        import base64, itertools
+        exec(''.join({} for c,k in zip(base64.b64decode({}), itertools.cycle({}))).encode())\
+        """).format(xor_func, b64_enc_content, key)
 
     out_path = Path(args.name)
     out_path.parent.mkdir(parents=True, exist_ok=True)
