@@ -26,7 +26,7 @@ The Client is a cross-platform compatible Messenger Client supporting Python v3.
 
 ```
 operator~# ./builder.py --encryption-key test
-Wrote Python client to 'client.py'
+[+] Wrote Python client to 'client.py'
 operator~# ./client.py 
 [+] Connected to http://localhost:8080/socketio/?EIO=4&transport=websocket
 ```

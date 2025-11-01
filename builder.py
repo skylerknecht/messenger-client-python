@@ -30,8 +30,6 @@ def add_arguments(parser):
                      help="Server URL the client should connect to.")
     cfg.add_argument("-e", "--encryption-key", default="",
                      help="AES encryption key to embed (optional).")
-    cfg.add_argument("--messenger-id", default="",
-                     help="Hardcoded Messenger ID (optional).")
     cfg.add_argument("--user-agent", default=USER_AGENT,
                      help="Custom HTTP/WebSocket User-Agent string (optional).")
     cfg.add_argument("--proxy", default="",
@@ -79,7 +77,7 @@ def build(args):
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(rendered, encoding="utf-8")
 
-    print("Wrote Python client to '{}'".format(out_path))
+    print("[+] Wrote Python client to '{}'".format(out_path))
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(usage=argparse.SUPPRESS)

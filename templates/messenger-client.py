@@ -621,6 +621,7 @@ class WSClient(Client):
         self.ssl_context.check_hostname = False
         self.ssl_context.verify_mode = ssl.CERT_NONE
         self.identifier = ''
+
     async def connect(self):
         self.ws = await self.session.ws_connect(
             self.server_url,
