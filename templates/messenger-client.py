@@ -817,9 +817,8 @@ async def main():
         elif "http" in attempt:
             print(f'[*] Attempting to connect over {attempt.upper()}')
             client = HTTPClient(candidate_url, encryption_key, user_agent, proxy)
-        else:
-            print('[!] No suitable clients identified, shutting down.')
-            sys.exit(0)
+        if not client:
+            continue
         try:
             await client.connect()
             print(f'[+] Connected to {candidate_url}')
