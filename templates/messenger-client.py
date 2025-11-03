@@ -853,7 +853,7 @@ async def main():
         await asyncio.sleep(sleep_time)
         try:
             await client.connect()
-            print(f'[+] Reconnected to {candidate_url}')
+            print(f'[+] Reconnected')
             attempts = 0
             await client.start()
         except Exception as e:
