@@ -805,7 +805,7 @@ async def main():
         scheme, remainder = server_url.split("://", 1)
         attempts = scheme.split('+')
     else:
-        attempts = ["ws", "http", "wss", "https"]
+        attempts = ["ws", "wss", "http", "https"]
 
     client = None
     connected = False
@@ -818,9 +818,6 @@ async def main():
             print(f'[*] Attempting to connect over {attempt.upper()}')
             client = HTTPClient(candidate_url, encryption_key, user_agent, proxy)
         try:
-            if not client:
-                print('[*] No suitable clients identified, shutting down.')
-                sys.exit(0)
             await client.connect()
             print(f'[+] Connected to {candidate_url}')
             connected = True
