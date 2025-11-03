@@ -818,7 +818,7 @@ async def main():
             print(f'[*] Attempting to connect over {attempt.upper()}')
             client = HTTPClient(candidate_url, encryption_key, user_agent, proxy)
         else:
-            print(f"[!] Unknown scheme {attempt.upper()}")
+            print(f"[!] Unsupported scheme {attempt.upper()}")
             continue
         try:
             await client.connect()
