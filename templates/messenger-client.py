@@ -613,7 +613,7 @@ class Client:
 class WSClient(Client):
     def __init__(self, server_url, encryption_key, user_agent, proxy):
         super().__init__(encryption_key)
-        self.server_url = server_url
+        self.server_url = server_url.strip('/').replace('ws', 'http') + '/socketio/?EIO=4&transport=websocket'
         self.headers = {'User-Agent': user_agent}
         self.proxy = proxy
         self.session = aiohttp.ClientSession(headers=self.headers)
@@ -631,7 +631,6 @@ class WSClient(Client):
         check_in_msg = self.serialize_messages([CheckInMessage(messenger_id=self.identifier)])
         await self.ws.send_bytes(check_in_msg)
         if self.identifier:
-            print(f'[+] Connected to {self.server_url}')
             return
         msg = await self.ws.receive()
         messages = self.deserialize_messages(msg.data)
@@ -639,7 +638,6 @@ class WSClient(Client):
         check_in_msg = messages[0]
         assert isinstance(check_in_msg, CheckInMessage), f"[!] Expected CheckInMessage, got {type(check_in_msg)}"
         self.identifier = check_in_msg.messenger_id
-        print(f'[+] Connected to {self.server_url}')
 
     async def start(self):
         async for msg in self.ws:
@@ -654,7 +652,7 @@ class WSClient(Client):
 class HTTPClient(Client):
     def __init__(self, server_url, encryption_key, user_agent, proxy):
         super().__init__(encryption_key)
-        self.server_url = server_url
+        self.server_url = server_url.strip('/') + '/socketio/?EIO=4&transport=polling'
         self.encryption_key = encryption_key
         self.headers = {'User-Agent': user_agent}
         self.proxy = proxy
@@ -686,14 +684,12 @@ class HTTPClient(Client):
         loop = asyncio.get_event_loop()
         resp = await loop.run_in_executor(None, self._blocking_http_req, req, 10.0)
         if self.identifier:
-            print(f'[+] Connected to {self.server_url}')
             return
         messages = self.deserialize_messages(resp)
         assert len(messages) > 0, f"[*] Invalid response from server:\n{resp}"
         check_in_msg = messages[0]
         assert isinstance(check_in_msg, CheckInMessage), "[*] Expected CheckInMessage, got something else"
         self.identifier = check_in_msg.messenger_id
-        print(f'[+] Connected to {self.server_url}')
 
     async def start(self):
         while True:
@@ -778,7 +774,11 @@ async def main():
     args = parse_args()
 
     server_url = args.server_url or SERVER_URL
-    encryption_key = generate_hash(args.encryption_key or ENCRYPTION_KEY)
+    encryption_key = args.encryption_key or ENCRYPTION_KEY
+    if not encryption_key:
+        print('[!] No encryption key provided, please specify `--encryption-key`')
+        sys.exit(0)
+    encryption_key = generate_hash(encryption_key)
     user_agent = args.user_agent or USER_AGENT
     proxy = args.proxy or PROXY
     remote_port_forwards = (
@@ -800,17 +800,36 @@ async def main():
     if proxy and not proxy.startswith('http'):
         proxy = f'http://{proxy}'
 
-    if not encryption_key:
-        print('[!] No encryption key provided.')
-
-    if server_url.startswith('ws') and ws:
-        server_url = server_url.strip('/').replace('ws', 'http') + '/socketio/?EIO=4&transport=websocket'
-        client = WSClient(server_url, encryption_key, user_agent, proxy)
-    elif server_url.startswith('http'):
-        server_url = server_url.strip('/') + '/socketio/?EIO=4&transport=polling'
-        client = HTTPClient(server_url, encryption_key, user_agent, proxy)
+    remainder = server_url
+    if "://" in server_url:
+        scheme, remainder = server_url.split("://", 1)
+        attempts = scheme.split('+')
     else:
-        print('[*] No suitable clients identified, shutting down.')
+        attempts = ["ws", "http", "wss", "https"]
+
+    client = None
+    connected = False
+    for attempt in attempts:
+        candidate_url = f"{attempt}://{remainder}"
+        if "ws" in attempt:
+            print(f'[*] Attempting to connect over {attempt.upper()}')
+            client = WSClient(candidate_url, encryption_key, user_agent, proxy)
+        elif "http" in attempt:
+            print(f'[*] Attempting to connect over {attempt.upper()}')
+            client = HTTPClient(candidate_url, encryption_key, user_agent, proxy)
+        try:
+            if not client:
+                print('[*] No suitable clients identified, shutting down.')
+                sys.exit(0)
+            await client.connect()
+            print(f'[+] Connected to {candidate_url}')
+            connected = True
+            break
+        except Exception as e:
+            print(f'[!] Failed to connect to {candidate_url}: {e}')
+
+    if not connected:
+        print('[!] No suitable clients identified, shutting down.')
         sys.exit(0)
 
     remote_forwards = []
@@ -819,12 +838,19 @@ async def main():
         await remote_forward.start()
         remote_forwards.append(remote_forward)
 
+    try:
+        await client.start()
+    except Exception as e:
+        print(f'[!] Failed to start client: {e}')
+
+    if retry_attempts <= 0:
+        print('[*] Retry attempts set to zero, exiting.')
+        sys.exit(0)
+
     attempts = 0
-    never_disconnected = True
-    sleep_time = retry_duration / retry_attempts if retry_attempts > 0 else 0
-    while never_disconnected or attempts < retry_attempts:
-        if not never_disconnected:
-            await asyncio.sleep(sleep_time)
+    sleep_time = retry_duration / retry_attempts
+    while attempts < retry_attempts:
+        await asyncio.sleep(sleep_time)
         try:
             await client.connect()
             for remote_forward in remote_forwards:
@@ -832,8 +858,6 @@ async def main():
             attempts = 0
             await client.start()
         except Exception as e:
-            never_disconnected = False
-
             exc_type = type(e)
             tb = e.__traceback__
             filename = tb.tb_frame.f_code.co_filename
@@ -842,10 +866,6 @@ async def main():
             print(f"[!] Exception Occurred: {exc_type.__module__}.{exc_type.__name__} at {filename}:{line_no}")
 
             attempts += 1
-            if retry_attempts == 0:
-                print(f"[*] Retry attempts set to zero, exiting.")
-                sys.exit(0)
-
             print(f"[+] Attempting to reconnect (attempt #{attempts}/{retry_attempts})")
 
 {% if non_main_thread %}
