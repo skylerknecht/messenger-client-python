@@ -853,8 +853,7 @@ async def main():
         await asyncio.sleep(sleep_time)
         try:
             await client.connect()
-            for remote_forward in remote_forwards:
-                remote_forward.messenger = client
+            print(f'[+] Reconnected to {candidate_url}')
             attempts = 0
             await client.start()
         except Exception as e:
