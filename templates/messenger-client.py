@@ -811,7 +811,7 @@ async def main():
     connected = False
     for attempt in attempts:
         candidate_url = f"{attempt}://{remainder}"
-        if "ws" in attempt:
+        if "ws" in attempt and ws:
             print(f'[*] Attempting to connect over {attempt.upper()}')
             client = WSClient(candidate_url, encryption_key, user_agent, proxy)
         elif "http" in attempt:
