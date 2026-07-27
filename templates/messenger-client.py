@@ -566,7 +566,7 @@ class Client:
                     data=msg
                 )
                 await self.send_downstream_message(downstream_message)
-            except (EOFError, ConnectionResetError):
+            except (EOFError, ConnectionResetError, ConnectionAbortedError):
                 break
 
         downstream_message = SendDataMessage(
@@ -596,6 +596,9 @@ class Client:
         elif isinstance(message, SendDataMessage):
             forwarder_client = self.forwarder_clients.get(message.forwarder_client_id)
             if not forwarder_client:
+                return
+            if not message.data:
+                forwarder_client.writer.close()
                 return
             forwarder_client.writer.write(message.data)
         else:
