@@ -40,10 +40,9 @@ RETRY_ATTEMPTS = {{ retry_attempts }}
 
 ForwarderClient = namedtuple('ForwarderClient', 'reader writer')
 alphanumeric = list(string.ascii_letters + string.digits)
-alphabet = list(string.ascii_letters)
 
 def alphanumeric_identifier(length: int = 10) -> str:
-    _identifier = [alphanumeric[random.randint(0, len(alphabet) - 1)] for _ in range(0, length)]
+    _identifier = [alphanumeric[random.randint(0, len(alphanumeric) - 1)] for _ in range(0, length)]
     _identifier = ''.join(_identifier)
     return _identifier
 
