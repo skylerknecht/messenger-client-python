@@ -574,13 +574,13 @@ class Client:
             except (EOFError, ConnectionResetError, ConnectionAbortedError):
                 break
 
-        downstream_message = SendDataMessage(
-            forwarder_client_id=forwarder_client_identifier,
-            data=b''
-        )
-        await self.send_downstream_message(downstream_message)
         forwarder_client.writer.close()
-        del self.forwarder_clients[forwarder_client_identifier]
+        if self.forwarder_clients.pop(forwarder_client_identifier, None) is not None:
+            downstream_message = SendDataMessage(
+                forwarder_client_id=forwarder_client_identifier,
+                data=b''
+            )
+            await self.send_downstream_message(downstream_message)
 
     async def handle_message(self, message):
         if isinstance(message, InitiateForwarderClientReq):
@@ -598,6 +598,7 @@ class Client:
                 await forwarder_client.writer.wait_closed()
                 self.forwarder_clients.pop(message.forwarder_client_id, None)
                 return
+            forwarder_client.writer.transport.resume_reading()
             asyncio.create_task(self.stream(message.forwarder_client_id))
         elif isinstance(message, SendDataMessage):
             forwarder_client = self.forwarder_clients.get(message.forwarder_client_id)
@@ -743,6 +744,8 @@ class RemotePortForwarder:
     async def handle_client(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         forwarder_client = ForwarderClient(reader, writer)
         forwarder_client_id = alphanumeric_identifier()
+
+        writer.transport.pause_reading()
 
         downstream_message = InitiateForwarderClientReq(
             forwarder_client_id=forwarder_client_id,
