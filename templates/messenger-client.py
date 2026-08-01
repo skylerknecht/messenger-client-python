@@ -615,7 +615,10 @@ class Client:
 class WSClient(Client):
     def __init__(self, server_url, encryption_key, user_agent, proxy):
         super().__init__(encryption_key)
-        self.server_url = server_url.strip('/').replace('ws', 'http') + '/socketio/?EIO=4&transport=websocket'
+        # aiohttp >=3.8 handles wss:// through proxies natively (CONNECT tunnel).
+        # ws:// through an HTTP proxy will fail — aiohttp sends it in absolute form
+        # instead of using CONNECT per RFC 6455 §4.1. Use wss:// with a proxy.
+        self.server_url = server_url.strip('/')
         self.headers = {'User-Agent': user_agent}
         self.proxy = proxy
         self.session = aiohttp.ClientSession(headers=self.headers)
@@ -654,7 +657,7 @@ class WSClient(Client):
 class HTTPClient(Client):
     def __init__(self, server_url, encryption_key, user_agent, proxy):
         super().__init__(encryption_key)
-        self.server_url = server_url.strip('/') + '/socketio/?EIO=4&transport=polling'
+        self.server_url = server_url.strip('/')
         self.encryption_key = encryption_key
         self.headers = {'User-Agent': user_agent}
         self.proxy = proxy

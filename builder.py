@@ -62,6 +62,8 @@ def build(args):
     out_path.write_text(rendered, encoding="utf-8")
 
     print("[+] Wrote Python client to '{}'".format(out_path))
+    if args.proxy:
+        print("[!] Warning: ws:// through an HTTP proxy may fail — aiohttp sends it in absolute form instead of using CONNECT. Use wss:// with a proxy.")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(usage=argparse.SUPPRESS)
