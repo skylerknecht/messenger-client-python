@@ -503,28 +503,34 @@ class Client:
                 asyncio.open_connection(ip, port),
                 timeout=5
             )
-            self.forwarder_clients[client_id] = ForwarderClient(reader, writer)
+            forwarder_client = ForwarderClient(reader, writer)
+            self.forwarder_clients[client_id] = forwarder_client
 
-            bind_info = writer.get_extra_info("sockname")
-            bind_addr = bind_info[0]
-            bind_port = bind_info[1]
+            try:
+                bind_info = writer.get_extra_info("sockname")
+                bind_addr = bind_info[0]
+                bind_port = bind_info[1]
 
-            sock = writer.get_extra_info("socket")
-            family = sock.family
-            atype = 1 if family == socket.AF_INET else 4
+                sock = writer.get_extra_info("socket")
+                family = sock.family
+                atype = 1 if family == socket.AF_INET else 4
 
-            downstream_message = InitiateForwarderClientRep(
-                forwarder_client_id=client_id,
-                bind_address=bind_addr,
-                bind_port=bind_port,
-                address_type=atype,
-                reason=0
-            )
+                downstream_message = InitiateForwarderClientRep(
+                    forwarder_client_id=client_id,
+                    bind_address=bind_addr,
+                    bind_port=bind_port,
+                    address_type=atype,
+                    reason=0
+                )
 
-            asyncio.create_task(self.stream(client_id))
+                asyncio.create_task(self.stream(client_id))
+            except Exception:
+                writer.close()
+                self.forwarder_clients.pop(client_id, None)
+                raise
         except socket.gaierror:
             reason = 4
-        except socket.timeout:
+        except asyncio.TimeoutError:
             reason = 6
         except ConnectionRefusedError:
             reason = 5
@@ -573,6 +579,7 @@ class Client:
             data=b''
         )
         await self.send_downstream_message(downstream_message)
+        forwarder_client.writer.close()
         del self.forwarder_clients[forwarder_client_identifier]
 
     async def handle_message(self, message):
@@ -598,8 +605,10 @@ class Client:
                 return
             if not message.data:
                 forwarder_client.writer.close()
+                self.forwarder_clients.pop(message.forwarder_client_id, None)
                 return
             forwarder_client.writer.write(message.data)
+            await forwarder_client.writer.drain()
         else:
             print(f"[!] Received unknown message type: {type(message).__name__}")
 
@@ -626,6 +635,9 @@ class WSClient(Client):
         self.ssl_context.check_hostname = False
         self.ssl_context.verify_mode = ssl.CERT_NONE
         self.identifier = ''
+
+    async def close(self):
+        await self.session.close()
 
     async def connect(self):
         self.ws = await self.session.ws_connect(
@@ -737,9 +749,8 @@ class RemotePortForwarder:
             ip_address=self.destination_host,
             port=int(self.destination_port)
         )
-        await self.messenger.send_downstream_message(downstream_message)
-
         self.messenger.forwarder_clients[forwarder_client_id] = forwarder_client
+        await self.messenger.send_downstream_message(downstream_message)
 
     def parse_config(self, config):
         parts = config.split(':')
@@ -864,13 +875,18 @@ async def main():
         except Exception as e:
             exc_type = type(e)
             tb = e.__traceback__
-            filename = tb.tb_frame.f_code.co_filename
-            line_no = tb.tb_lineno
-
-            print(f"[!] Exception Occurred: {exc_type.__module__}.{exc_type.__name__} at {filename}:{line_no}")
+            if tb:
+                filename = tb.tb_frame.f_code.co_filename
+                line_no = tb.tb_lineno
+                print(f"[!] Exception Occurred: {exc_type.__module__}.{exc_type.__name__} at {filename}:{line_no}")
+            else:
+                print(f"[!] Exception Occurred: {exc_type.__module__}.{exc_type.__name__}: {e}")
 
             attempts += 1
             print(f"[+] Attempting to reconnect (attempt #{attempts}/{retry_attempts})")
+
+    if hasattr(client, 'close'):
+        await client.close()
 
 {% if non_main_thread %}
 def run_coro_in_thread(coro):
