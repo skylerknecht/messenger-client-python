@@ -6,7 +6,6 @@ import hashlib
 import os
 import random
 import ssl
-import sys
 import struct
 import socket
 import string
@@ -34,11 +33,10 @@ SERVER_URL = "{{ server_url }}"
 ENCRYPTION_KEY = "{{ encryption_key }}"
 USER_AGENT = "{{ user_agent }}"
 PROXY = "{{ proxy }}"
-REMOTE_FORWARDS = {{ remote_port_forwards }}
 RETRY_DURATION = {{ retry_duration }}
 RETRY_ATTEMPTS = {{ retry_attempts }}
 
-ForwarderClient = namedtuple('ForwarderClient', 'reader writer')
+TcpClient = namedtuple('TcpClient', 'reader writer')
 alphanumeric = list(string.ascii_letters + string.digits)
 
 def alphanumeric_identifier(length: int = 10) -> str:
@@ -284,15 +282,12 @@ else:
             return unpad(b''.join(blocks))
 
     def encrypt(key: bytes, plaintext: bytes) -> bytes:
-        # Encrypt the plaintext bytes with a provided key.
-        # Generate a new 16-byte IV and include that at the beginning of the ciphertext
         iv = os.urandom(16)
         aes = AES(key)
         ciphertext = aes.encrypt_cbc(plaintext, iv)
         return iv + ciphertext
 
     def decrypt(key: bytes, ciphertext: bytes) -> bytes:
-        # Note that the first 16 bytes of the ciphertext contain the IV
         iv = ciphertext[:16]
         aes = AES(key)
         ciphertext = ciphertext[16:]
@@ -301,15 +296,17 @@ else:
 ### Message Structures ###
 
 CheckInMessage = namedtuple('CheckInMessage', ['messenger_id'])
-InitiateForwarderClientReq = namedtuple('InitiateForwarderClientReq', ['forwarder_client_id', 'ip_address', 'port'])
-InitiateForwarderClientRep = namedtuple('InitiateForwarderClientRep', ['forwarder_client_id', 'bind_address', 'bind_port', 'address_type', 'reason'])
-SendDataMessage = namedtuple('SendDataMessage', ['forwarder_client_id', 'data'])
+InitiateTCPClientReq = namedtuple('InitiateTCPClientReq', ['client_id', 'ip_address', 'port'])
+InitiateTCPClientRep = namedtuple('InitiateTCPClientRep', ['client_id', 'bind_address', 'bind_port', 'address_type', 'reason', 'remote_addr', 'remote_port'])
+SendDataMessage = namedtuple('SendDataMessage', ['client_id', 'data'])
+InitiateBINDReq = namedtuple('InitiateBINDReq', ['bind_id', 'listening_host', 'listening_port', 'destination_host', 'destination_port'])
+InitiateBINDRep = namedtuple('InitiateBINDRep', ['bind_id', 'listening_host', 'listening_port', 'reason'])
 
 class MessageParser:
     @staticmethod
     def read_uint32(data: bytes) -> (int, bytes):
-        unsigned_32bit = data[:4]               # The 4-byte integer
-        remaining_data = data[4:]               # Everything after the 4 bytes
+        unsigned_32bit = data[:4]
+        remaining_data = data[4:]
         (value,) = struct.unpack('!I', unsigned_32bit)
         return value, remaining_data
 
@@ -325,39 +322,54 @@ class MessageParser:
         return CheckInMessage(messenger_id=messenger_id)
 
     @staticmethod
-    def parse_initiate_forwarder_client_req(value: bytes) -> InitiateForwarderClientReq:
-        forwarder_client_id, value = MessageParser.read_string(value)
+    def parse_initiate_tcp_client_req(value: bytes) -> InitiateTCPClientReq:
+        client_id, value = MessageParser.read_string(value)
         ip_address, value = MessageParser.read_string(value)
         port, value = MessageParser.read_uint32(value)
-        return InitiateForwarderClientReq(
-            forwarder_client_id=forwarder_client_id,
-            ip_address=ip_address,
-            port=port
-        )
+        return InitiateTCPClientReq(client_id=client_id, ip_address=ip_address, port=port)
 
     @staticmethod
-    def parse_initiate_forwarder_client_rep(value: bytes) -> InitiateForwarderClientRep:
-        forwarder_client_id, value = MessageParser.read_string(value)
+    def parse_initiate_tcp_client_rep(value: bytes) -> InitiateTCPClientRep:
+        client_id, value = MessageParser.read_string(value)
         bind_address, value = MessageParser.read_string(value)
         bind_port, value = MessageParser.read_uint32(value)
         address_type, value = MessageParser.read_uint32(value)
         reason, value = MessageParser.read_uint32(value)
-        return InitiateForwarderClientRep(
-            forwarder_client_id=forwarder_client_id,
-            bind_address=bind_address,
-            bind_port=bind_port,
-            address_type=address_type,
-            reason=reason
+        remote_addr, value = MessageParser.read_string(value)
+        remote_port, value = MessageParser.read_uint32(value)
+        return InitiateTCPClientRep(
+            client_id=client_id, bind_address=bind_address, bind_port=bind_port,
+            address_type=address_type, reason=reason, remote_addr=remote_addr, remote_port=remote_port
         )
 
     @staticmethod
     def parse_send_data(value: bytes) -> SendDataMessage:
-        forwarder_client_id, value = MessageParser.read_string(value)
+        client_id, value = MessageParser.read_string(value)
         encoded_data, value = MessageParser.read_string(value)
         raw_data = base64.b64decode(encoded_data)
-        return SendDataMessage(
-            forwarder_client_id=forwarder_client_id,
-            data=raw_data
+        return SendDataMessage(client_id=client_id, data=raw_data)
+
+    @staticmethod
+    def parse_initiate_bind_req(value: bytes) -> InitiateBINDReq:
+        bind_id, value = MessageParser.read_string(value)
+        listening_host, value = MessageParser.read_string(value)
+        listening_port, value = MessageParser.read_uint32(value)
+        destination_host, value = MessageParser.read_string(value)
+        destination_port, value = MessageParser.read_uint32(value)
+        return InitiateBINDReq(
+            bind_id=bind_id, listening_host=listening_host, listening_port=listening_port,
+            destination_host=destination_host, destination_port=destination_port
+        )
+
+    @staticmethod
+    def parse_initiate_bind_rep(value: bytes) -> InitiateBINDRep:
+        bind_id, value = MessageParser.read_string(value)
+        listening_host, value = MessageParser.read_string(value)
+        listening_port, value = MessageParser.read_uint32(value)
+        reason, value = MessageParser.read_uint32(value)
+        return InitiateBINDRep(
+            bind_id=bind_id, listening_host=listening_host,
+            listening_port=listening_port, reason=reason
         )
 
     @staticmethod
@@ -371,15 +383,21 @@ class MessageParser:
         leftover = data[payload_len:]
         if message_type == 0x01:
             decrypted = decrypt(encryption_key, payload)
-            parsed_msg = MessageParser.parse_initiate_forwarder_client_req(decrypted)
+            parsed_msg = MessageParser.parse_initiate_tcp_client_req(decrypted)
         elif message_type == 0x02:
             decrypted = decrypt(encryption_key, payload)
-            parsed_msg = MessageParser.parse_initiate_forwarder_client_rep(decrypted)
+            parsed_msg = MessageParser.parse_initiate_tcp_client_rep(decrypted)
         elif message_type == 0x03:
             decrypted = decrypt(encryption_key, payload)
             parsed_msg = MessageParser.parse_send_data(decrypted)
         elif message_type == 0x04:
             parsed_msg = MessageParser.parse_check_in(payload)
+        elif message_type == 0x05:
+            decrypted = decrypt(encryption_key, payload)
+            parsed_msg = MessageParser.parse_initiate_bind_req(decrypted)
+        elif message_type == 0x06:
+            decrypted = decrypt(encryption_key, payload)
+            parsed_msg = MessageParser.parse_initiate_bind_rep(decrypted)
         else:
             raise ValueError(f"Unknown message type: {hex(message_type)}")
 
@@ -388,33 +406,36 @@ class MessageParser:
 class MessageBuilder:
     @staticmethod
     def serialize_message(encryption_key: bytes, msg) -> bytes:
-        if isinstance(msg, InitiateForwarderClientReq):
+        if isinstance(msg, InitiateTCPClientReq):
             message_type = 0x01
-            value = encrypt(encryption_key, MessageBuilder.build_initiate_forwarder_client_req(
-                msg.forwarder_client_id,
-                msg.ip_address,
-                msg.port
+            value = encrypt(encryption_key, MessageBuilder.build_initiate_tcp_client_req(
+                msg.client_id, msg.ip_address, msg.port
             ))
-        elif isinstance(msg, InitiateForwarderClientRep):
+        elif isinstance(msg, InitiateTCPClientRep):
             message_type = 0x02
-            value = encrypt(encryption_key, MessageBuilder.build_initiate_forwarder_client_rep(
-                msg.forwarder_client_id,
-                msg.bind_address,
-                msg.bind_port,
-                msg.address_type,
-                msg.reason
+            value = encrypt(encryption_key, MessageBuilder.build_initiate_tcp_client_rep(
+                msg.client_id, msg.bind_address, msg.bind_port,
+                msg.address_type, msg.reason, msg.remote_addr, msg.remote_port
             ))
         elif isinstance(msg, SendDataMessage):
             message_type = 0x03
             value = encrypt(encryption_key, MessageBuilder.build_send_data(
-                msg.forwarder_client_id,
-                msg.data
+                msg.client_id, msg.data
             ))
         elif isinstance(msg, CheckInMessage):
             message_type = 0x04
-            value = MessageBuilder.build_check_in_message(
-                msg.messenger_id
-            )
+            value = MessageBuilder.build_check_in_message(msg.messenger_id)
+        elif isinstance(msg, InitiateBINDReq):
+            message_type = 0x05
+            value = encrypt(encryption_key, MessageBuilder.build_initiate_bind_req(
+                msg.bind_id, msg.listening_host, msg.listening_port,
+                msg.destination_host, msg.destination_port
+            ))
+        elif isinstance(msg, InitiateBINDRep):
+            message_type = 0x06
+            value = encrypt(encryption_key, MessageBuilder.build_initiate_bind_rep(
+                msg.bind_id, msg.listening_host, msg.listening_port, msg.reason
+            ))
         else:
             raise ValueError(f"Unknown message tuple type: {type(msg)}")
 
@@ -428,7 +449,6 @@ class MessageBuilder:
 
     @staticmethod
     def build_string(value: str) -> bytes:
-
         encoded = value.encode('utf-8')
         return struct.pack('!I', len(encoded)) + encoded
 
@@ -437,30 +457,49 @@ class MessageBuilder:
         return MessageBuilder.build_string(messenger_id)
 
     @staticmethod
-    def build_initiate_forwarder_client_req(forwarder_client_id: str,
-                                            ip_address: str, port: int) -> bytes:
+    def build_initiate_tcp_client_req(client_id: str, ip_address: str, port: int) -> bytes:
         return (
-            MessageBuilder.build_string(forwarder_client_id) +
+            MessageBuilder.build_string(client_id) +
             MessageBuilder.build_string(ip_address) +
             struct.pack('!I', port)
         )
 
     @staticmethod
-    def build_initiate_forwarder_client_rep(forwarder_client_id: str,
-                                            bind_address: str, bind_port: int,
-                                            address_type: int, reason: int) -> bytes:
+    def build_initiate_tcp_client_rep(client_id: str, bind_address: str, bind_port: int,
+                                     address_type: int, reason: int, remote_addr: str, remote_port: int) -> bytes:
         return (
-            MessageBuilder.build_string(forwarder_client_id) +
+            MessageBuilder.build_string(client_id) +
             MessageBuilder.build_string(bind_address) +
-            struct.pack('!III', bind_port, address_type, reason)
+            struct.pack('!III', bind_port, address_type, reason) +
+            MessageBuilder.build_string(remote_addr) +
+            struct.pack('!I', remote_port)
         )
 
     @staticmethod
-    def build_send_data(forwarder_client_id: str, data: bytes) -> bytes:
+    def build_send_data(client_id: str, data: bytes) -> bytes:
         encoded_data = base64.b64encode(data).decode('utf-8')
         return (
-            MessageBuilder.build_string(forwarder_client_id) +
+            MessageBuilder.build_string(client_id) +
             MessageBuilder.build_string(encoded_data)
+        )
+
+    @staticmethod
+    def build_initiate_bind_req(bind_id: str, listening_host: str, listening_port: int,
+                                destination_host: str, destination_port: int) -> bytes:
+        return (
+            MessageBuilder.build_string(bind_id) +
+            MessageBuilder.build_string(listening_host) +
+            struct.pack('!I', listening_port) +
+            MessageBuilder.build_string(destination_host) +
+            struct.pack('!I', destination_port)
+        )
+
+    @staticmethod
+    def build_initiate_bind_rep(bind_id: str, listening_host: str, listening_port: int, reason: int) -> bytes:
+        return (
+            MessageBuilder.build_string(bind_id) +
+            MessageBuilder.build_string(listening_host) +
+            struct.pack('!II', listening_port, reason)
         )
 
 
@@ -469,7 +508,9 @@ class MessageBuilder:
 class Client:
     def __init__(self, encryption_key):
         self.encryption_key = encryption_key
-        self.forwarder_clients = {}
+        self.identifier = ''
+        self.tcp_clients = {}
+        self.remote_port_forwarders = []
 
     def deserialize_messages(self, data: bytes):
         messages = []
@@ -493,41 +534,73 @@ class Client:
             data += MessageBuilder.serialize_message(self.encryption_key, message)
         return data
 
-    async def handle_initiate_forwarder_client_req(self, message):
-        try:
-            ip = message['IP Address']
-            port = message['Port']
-            client_id = message['Forwarder Client ID']
+    async def handle_bind(self, message):
+        existing = next((f for f in self.remote_port_forwarders if f.identifier == message.bind_id), None)
+        if existing is not None:
+            existing.close_all_clients()
+            existing.stop()
+            self.remote_port_forwarders.remove(existing)
+            reply = InitiateBINDRep(
+                bind_id=message.bind_id, listening_host="0.0.0.0",
+                listening_port=0, reason=0
+            )
+            await self.send_downstream_message(reply)
+            return
 
+        try:
+            forwarder = RemotePortForwarder(
+                self, message.bind_id, message.listening_host, message.listening_port,
+                message.destination_host, message.destination_port
+            )
+            success = await forwarder.start()
+            if not success:
+                reply = InitiateBINDRep(
+                    bind_id=message.bind_id, listening_host=message.listening_host,
+                    listening_port=message.listening_port, reason=1
+                )
+                await self.send_downstream_message(reply)
+                return
+            self.remote_port_forwarders.append(forwarder)
+            reply = InitiateBINDRep(
+                bind_id=message.bind_id, listening_host=message.listening_host,
+                listening_port=message.listening_port, reason=0
+            )
+            await self.send_downstream_message(reply)
+        except Exception:
+            reply = InitiateBINDRep(
+                bind_id=message.bind_id, listening_host=message.listening_host,
+                listening_port=message.listening_port, reason=1
+            )
+            await self.send_downstream_message(reply)
+
+    async def handle_initiate_tcp_client_req(self, client_id, ip, port):
+        try:
             reader, writer = await asyncio.wait_for(
                 asyncio.open_connection(ip, port),
                 timeout=5
             )
-            forwarder_client = ForwarderClient(reader, writer)
-            self.forwarder_clients[client_id] = forwarder_client
+            tcp_client = TcpClient(reader, writer)
+            self.tcp_clients[client_id] = tcp_client
 
-            try:
-                bind_info = writer.get_extra_info("sockname")
-                bind_addr = bind_info[0]
-                bind_port = bind_info[1]
+            bind_info = writer.get_extra_info("sockname")
+            bind_addr = bind_info[0]
+            bind_port = bind_info[1]
 
-                sock = writer.get_extra_info("socket")
-                family = sock.family
-                atype = 1 if family == socket.AF_INET else 4
+            peer_info = writer.get_extra_info("peername")
+            remote_addr = peer_info[0]
+            remote_port = peer_info[1]
 
-                downstream_message = InitiateForwarderClientRep(
-                    forwarder_client_id=client_id,
-                    bind_address=bind_addr,
-                    bind_port=bind_port,
-                    address_type=atype,
-                    reason=0
-                )
+            sock = writer.get_extra_info("socket")
+            family = sock.family
+            atype = 1 if family == socket.AF_INET else 4
 
-                asyncio.create_task(self.stream(client_id))
-            except Exception:
-                writer.close()
-                self.forwarder_clients.pop(client_id, None)
-                raise
+            downstream_message = InitiateTCPClientRep(
+                client_id=client_id, bind_address=bind_addr, bind_port=bind_port,
+                address_type=atype, reason=0, remote_addr=remote_addr, remote_port=remote_port
+            )
+            await self.send_downstream_message(downstream_message)
+            asyncio.create_task(self.stream(client_id))
+
         except socket.gaierror:
             reason = 4
         except asyncio.TimeoutError:
@@ -539,77 +612,70 @@ class Client:
                 errno.ENETUNREACH: 3,
                 errno.EHOSTUNREACH: 4,
                 errno.ECONNREFUSED: 5,
-                errno.ENOPROTOOPT: 7,
+                errno.EPROTONOSUPPORT: 7,
                 errno.EAFNOSUPPORT: 8
             }.get(e.errno, 1)
         except Exception:
             reason = 1
         else:
-            await self.send_downstream_message(downstream_message)
             return
 
-        downstream_message = InitiateForwarderClientRep(
-            forwarder_client_id=message["Forwarder Client ID"],
-            bind_address="0.0.0.0",
-            bind_port=0,
-            address_type=1,
-            reason=reason
+        downstream_message = InitiateTCPClientRep(
+            client_id=client_id, bind_address="0.0.0.0", bind_port=0,
+            address_type=1, reason=reason, remote_addr="0.0.0.0", remote_port=0
         )
         await self.send_downstream_message(downstream_message)
-        return
 
-    async def stream(self, forwarder_client_identifier):
-        forwarder_client = self.forwarder_clients[forwarder_client_identifier]
-        while True:
-            try:
-                msg = await forwarder_client.reader.read(4096)
+    async def stream(self, client_identifier):
+        tcp_client = self.tcp_clients.get(client_identifier)
+        if tcp_client is None:
+            return
+        try:
+            while True:
+                msg = await tcp_client.reader.read(4096)
                 if not msg:
                     break
-
-                downstream_message = SendDataMessage(
-                    forwarder_client_id=forwarder_client_identifier,
-                    data=msg
-                )
+                downstream_message = SendDataMessage(client_id=client_identifier, data=msg)
                 await self.send_downstream_message(downstream_message)
-            except (EOFError, ConnectionResetError, ConnectionAbortedError):
-                break
-
-        forwarder_client.writer.close()
-        if self.forwarder_clients.pop(forwarder_client_identifier, None) is not None:
-            downstream_message = SendDataMessage(
-                forwarder_client_id=forwarder_client_identifier,
-                data=b''
-            )
-            await self.send_downstream_message(downstream_message)
+        except (EOFError, ConnectionResetError, ConnectionAbortedError):
+            pass
+        except Exception:
+            pass
+        finally:
+            removed = self.tcp_clients.pop(client_identifier, None)
+            if removed is not None:
+                removed.writer.close()
+                downstream_message = SendDataMessage(client_id=client_identifier, data=b'')
+                await self.send_downstream_message(downstream_message)
 
     async def handle_message(self, message):
-        if isinstance(message, InitiateForwarderClientReq):
-            await self.handle_initiate_forwarder_client_req({
-                "IP Address": message.ip_address,
-                "Port": message.port,
-                "Forwarder Client ID": message.forwarder_client_id
-            })
-        elif isinstance(message, InitiateForwarderClientRep):
-            forwarder_client = self.forwarder_clients.get(message.forwarder_client_id)
-            if not forwarder_client:
+        if isinstance(message, InitiateTCPClientReq):
+            await self.handle_initiate_tcp_client_req(
+                message.client_id, message.ip_address, message.port
+            )
+        elif isinstance(message, InitiateTCPClientRep):
+            tcp_client = self.tcp_clients.get(message.client_id)
+            if not tcp_client:
                 return
             if message.reason != 0:
-                forwarder_client.writer.close()
-                await forwarder_client.writer.wait_closed()
-                self.forwarder_clients.pop(message.forwarder_client_id, None)
+                tcp_client.writer.close()
+                self.tcp_clients.pop(message.client_id, None)
                 return
-            forwarder_client.writer.transport.resume_reading()
-            asyncio.create_task(self.stream(message.forwarder_client_id))
+            tcp_client.writer.transport.resume_reading()
+            asyncio.create_task(self.stream(message.client_id))
         elif isinstance(message, SendDataMessage):
-            forwarder_client = self.forwarder_clients.get(message.forwarder_client_id)
-            if not forwarder_client:
+            tcp_client = self.tcp_clients.get(message.client_id)
+            if not tcp_client:
                 return
             if not message.data:
-                forwarder_client.writer.close()
-                self.forwarder_clients.pop(message.forwarder_client_id, None)
+                removed = self.tcp_clients.pop(message.client_id, None)
+                if removed:
+                    removed.writer.close()
                 return
-            forwarder_client.writer.write(message.data)
-            await forwarder_client.writer.drain()
+            tcp_client.writer.write(message.data)
+            await tcp_client.writer.drain()
+        elif isinstance(message, InitiateBINDReq):
+            await self.handle_bind(message)
         else:
             print(f"[!] Received unknown message type: {type(message).__name__}")
 
@@ -625,9 +691,6 @@ class Client:
 class WSClient(Client):
     def __init__(self, server_url, encryption_key, user_agent, proxy):
         super().__init__(encryption_key)
-        # aiohttp >=3.8 handles wss:// through proxies natively (CONNECT tunnel).
-        # ws:// through an HTTP proxy will fail — aiohttp sends it in absolute form
-        # instead of using CONNECT per RFC 6455 §4.1. Use wss:// with a proxy.
         self.server_url = server_url.strip('/')
         self.headers = {'User-Agent': user_agent}
         self.proxy = proxy
@@ -635,7 +698,7 @@ class WSClient(Client):
         self.ssl_context = ssl.create_default_context()
         self.ssl_context.check_hostname = False
         self.ssl_context.verify_mode = ssl.CERT_NONE
-        self.identifier = ''
+        self.downstream_messages = []
 
     async def close(self):
         await self.session.close()
@@ -658,14 +721,22 @@ class WSClient(Client):
         self.identifier = check_in_msg.messenger_id
 
     async def start(self):
+        while self.downstream_messages:
+            msg = self.downstream_messages.pop(0)
+            downstream_messages = [CheckInMessage(messenger_id=self.identifier), msg]
+            await self.ws.send_bytes(self.serialize_messages(downstream_messages))
+
         async for msg in self.ws:
             messages = self.deserialize_messages(msg.data)
             for message in messages:
                 asyncio.create_task(self.handle_message(message))
 
     async def send_downstream_message(self, downstream_message):
-        downstream_messages = [CheckInMessage(messenger_id=self.identifier), downstream_message]
-        await self.ws.send_bytes(self.serialize_messages(downstream_messages))
+        if self.ws and not self.ws.closed:
+            downstream_messages = [CheckInMessage(messenger_id=self.identifier), downstream_message]
+            await self.ws.send_bytes(self.serialize_messages(downstream_messages))
+        else:
+            self.downstream_messages.append(downstream_message)
 
 class HTTPClient(Client):
     def __init__(self, server_url, encryption_key, user_agent, proxy):
@@ -674,7 +745,6 @@ class HTTPClient(Client):
         self.encryption_key = encryption_key
         self.headers = {'User-Agent': user_agent}
         self.proxy = proxy
-        self.identifier = ''
         self.ssl_context = ssl.create_default_context()
         self.ssl_context.check_hostname = False
         self.ssl_context.verify_mode = ssl.CERT_NONE
@@ -734,38 +804,55 @@ class HTTPClient(Client):
         await self.downstream_messages.put(downstream_message)
 
 class RemotePortForwarder:
-    def __init__(self, messenger, config):
+    def __init__(self, messenger, bind_id, listening_host, listening_port, destination_host, destination_port):
         self.messenger = messenger
-        self.listening_host, self.listening_port, self.destination_host, self.destination_port = self.parse_config(
-            config)
-        self.name = 'Remote Port Forwarder'
-        self.identifier = alphanumeric_identifier()
+        self.identifier = bind_id
+        self.listening_host = listening_host
+        self.listening_port = int(listening_port)
+        self.destination_host = destination_host
+        self.destination_port = int(destination_port)
+        self.server = None
+        self.client_ids = []
 
     async def handle_client(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
-        forwarder_client = ForwarderClient(reader, writer)
-        forwarder_client_id = alphanumeric_identifier()
+        tcp_client = TcpClient(reader, writer)
+        client_id = alphanumeric_identifier()
+        self.client_ids.append(client_id)
 
         writer.transport.pause_reading()
 
-        downstream_message = InitiateForwarderClientReq(
-            forwarder_client_id=forwarder_client_id,
-            ip_address=self.destination_host,
-            port=int(self.destination_port)
-        )
-        self.messenger.forwarder_clients[forwarder_client_id] = forwarder_client
-        await self.messenger.send_downstream_message(downstream_message)
+        self.messenger.tcp_clients[client_id] = tcp_client
 
-    def parse_config(self, config):
-        parts = config.split(':')
-        return parts
+        downstream_message = InitiateTCPClientReq(
+            client_id=client_id,
+            ip_address=self.destination_host,
+            port=self.destination_port
+        )
+        await self.messenger.send_downstream_message(downstream_message)
 
     async def start(self):
         try:
-            await asyncio.start_server(self.handle_client, self.listening_host, int(self.listening_port))
+            self.server = await asyncio.start_server(
+                self.handle_client, self.listening_host, self.listening_port
+            )
         except OSError:
             print(f'[!] {self.listening_host}:{self.listening_port} is already in use.')
-            return
-        print(f'[+] {self.name} {self.identifier} is listening on {self.listening_host}:{self.listening_port}')
+            return False
+        print(f'[+] Remote Port Forwarder listening on {self.listening_host}:{self.listening_port}')
+        return True
+
+    def close_all_clients(self):
+        for client_id in self.client_ids:
+            tcp_client = self.messenger.tcp_clients.pop(client_id, None)
+            if tcp_client is not None:
+                try:
+                    tcp_client.writer.close()
+                except Exception:
+                    pass
+
+    def stop(self):
+        if self.server is not None:
+            self.server.close()
 
 ## Arg Parsing
 
@@ -782,11 +869,13 @@ def parse_args():
     parser.add_argument("--encryption-key")
     parser.add_argument("--user-agent")
     parser.add_argument("--proxy")
-    parser.add_argument("--remote-port-forwards", nargs="*")
-    parser.add_argument("--retry-duration", type=int)
+    parser.add_argument("--retry-duration", type=float)
     parser.add_argument("--retry-attempts", type=int)
 
-    return parser.parse_args()
+    args, unknown = parser.parse_known_args()
+    for arg in unknown:
+        print(f'[!] Could not find argument `{arg}`.')
+    return args
 
 
 async def main():
@@ -796,15 +885,10 @@ async def main():
     encryption_key = args.encryption_key or ENCRYPTION_KEY
     if not encryption_key:
         print('[!] No encryption key provided, please specify `--encryption-key`')
-        sys.exit(0)
+        return
     encryption_key = generate_hash(encryption_key)
     user_agent = args.user_agent or USER_AGENT
     proxy = args.proxy or PROXY
-    remote_port_forwards = (
-        args.remote_port_forwards
-        if args.remote_port_forwards is not None
-        else REMOTE_FORWARDS
-    )
     retry_duration = (
         args.retry_duration
         if args.retry_duration is not None
@@ -827,7 +911,6 @@ async def main():
         attempts = ["ws", "wss", "http", "https"]
 
     client = None
-    connected = False
     for attempt in attempts:
         candidate_url = f"{attempt}://{remainder}"
         if "ws" in attempt and ws:
@@ -842,40 +925,31 @@ async def main():
         try:
             await client.connect()
             print(f'[+] Connected to {candidate_url}')
-            connected = True
+            await client.start()
             break
         except Exception as e:
-            print(f'[!] Failed to connect to {candidate_url}: {e}')
+            print(f'[!] Connection failed: {e}')
+            client = None
+            continue
 
-    if not connected:
-        print('[!] No suitable clients identified, shutting down.')
-        sys.exit(0)
-
-    remote_forwards = []
-    for remote_port_forward in remote_port_forwards:
-        remote_forward = RemotePortForwarder(client, remote_port_forward)
-        await remote_forward.start()
-        remote_forwards.append(remote_forward)
-
-    try:
-        await client.start()
-    except Exception as e:
-        print(f'[!] Failed to start client: {e}')
+    if client is None:
+        print('[!] All connection attempts failed.')
+        return
 
     if retry_attempts <= 0:
-        print('[*] Retry attempts set to zero, exiting.')
-        sys.exit(0)
+        return
 
-    attempts = 0
     sleep_time = retry_duration / retry_attempts
-    while attempts < retry_attempts:
+    consecutive_failures = 0
+    while consecutive_failures < retry_attempts:
         await asyncio.sleep(sleep_time)
         try:
             await client.connect()
             print(f'[+] Reconnected')
-            attempts = 0
+            consecutive_failures = 0
             await client.start()
         except Exception as e:
+            consecutive_failures += 1
             exc_type = type(e)
             tb = e.__traceback__
             if tb:
@@ -884,9 +958,6 @@ async def main():
                 print(f"[!] Exception Occurred: {exc_type.__module__}.{exc_type.__name__} at {filename}:{line_no}")
             else:
                 print(f"[!] Exception Occurred: {exc_type.__module__}.{exc_type.__name__}: {e}")
-
-            attempts += 1
-            print(f"[+] Attempting to reconnect (attempt #{attempts}/{retry_attempts})")
 
     if hasattr(client, 'close'):
         await client.close()
