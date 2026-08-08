@@ -44,6 +44,12 @@ def alphanumeric_identifier(length: int = 10) -> str:
     _identifier = ''.join(_identifier)
     return _identifier
 
+class DecryptionError(Exception):
+    # Raised when an encrypted payload cannot be decrypted/unpadded — almost
+    # always a wrong encryption key. Treated as fatal: the messenger can never
+    # decrypt server traffic, so main() logs once and stops instead of looping.
+    pass
+
 if pycrypto:
     def decrypt(key: bytes, ciphertext: bytes) -> bytes:
         iv = ciphertext[:16]
@@ -335,8 +341,14 @@ class MessageParser:
         bind_port, value = MessageParser.read_uint32(value)
         address_type, value = MessageParser.read_uint32(value)
         reason, value = MessageParser.read_uint32(value)
-        remote_addr, value = MessageParser.read_string(value)
-        remote_port, value = MessageParser.read_uint32(value)
+        # remote_addr / remote_port are optional — the server omits them when it
+        # has no remote info (e.g. a reason!=0 denial). Only read them if bytes
+        # remain, otherwise a Rep without them overruns the buffer.
+        remote_addr = ''
+        remote_port = 0
+        if len(value) > 0:
+            remote_addr, value = MessageParser.read_string(value)
+            remote_port, value = MessageParser.read_uint32(value)
         return InitiateTCPClientRep(
             client_id=client_id, bind_address=bind_address, bind_port=bind_port,
             address_type=address_type, reason=reason, remote_addr=remote_addr, remote_port=remote_port
@@ -373,6 +385,15 @@ class MessageParser:
         )
 
     @staticmethod
+    def _decrypt(encryption_key: bytes, payload: bytes) -> bytes:
+        try:
+            return decrypt(encryption_key, payload)
+        except DecryptionError:
+            raise
+        except Exception as e:
+            raise DecryptionError(str(e))
+
+    @staticmethod
     def deserialize_message(encryption_key: bytes, raw_data: bytes):
         message_type, data = MessageParser.read_uint32(raw_data)
         message_length, data = MessageParser.read_uint32(data)
@@ -384,21 +405,21 @@ class MessageParser:
         payload = data[:payload_len]
         leftover = data[payload_len:]
         if message_type == 0x01:
-            decrypted = decrypt(encryption_key, payload)
+            decrypted = MessageParser._decrypt(encryption_key, payload)
             parsed_msg = MessageParser.parse_initiate_tcp_client_req(decrypted)
         elif message_type == 0x02:
-            decrypted = decrypt(encryption_key, payload)
+            decrypted = MessageParser._decrypt(encryption_key, payload)
             parsed_msg = MessageParser.parse_initiate_tcp_client_rep(decrypted)
         elif message_type == 0x03:
-            decrypted = decrypt(encryption_key, payload)
+            decrypted = MessageParser._decrypt(encryption_key, payload)
             parsed_msg = MessageParser.parse_send_data(decrypted)
         elif message_type == 0x04:
             parsed_msg = MessageParser.parse_check_in(payload)
         elif message_type == 0x05:
-            decrypted = decrypt(encryption_key, payload)
+            decrypted = MessageParser._decrypt(encryption_key, payload)
             parsed_msg = MessageParser.parse_initiate_bind_req(decrypted)
         elif message_type == 0x06:
-            decrypted = decrypt(encryption_key, payload)
+            decrypted = MessageParser._decrypt(encryption_key, payload)
             parsed_msg = MessageParser.parse_initiate_bind_rep(decrypted)
         else:
             raise ValueError(f"Unknown message type: {hex(message_type)}")
@@ -929,6 +950,11 @@ async def main():
             print(f'[+] Connected to {candidate_url}')
             await client.start()
             break
+        except DecryptionError:
+            print('[!] Decryption failed — the encryption key is likely incorrect. The messenger cannot decrypt server traffic and is stopping.')
+            if hasattr(client, 'close'):
+                await client.close()
+            return
         except Exception as e:
             print(f'[!] Connection failed: {e}')
             client = None
@@ -950,6 +976,9 @@ async def main():
             print(f'[+] Reconnected')
             consecutive_failures = 0
             await client.start()
+        except DecryptionError:
+            print('[!] Decryption failed — the encryption key is likely incorrect. The messenger cannot decrypt server traffic and is stopping.')
+            break
         except Exception as e:
             consecutive_failures += 1
             print(f'[!] Reconnection failed: {e}')
