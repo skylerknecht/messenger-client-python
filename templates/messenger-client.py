@@ -376,6 +376,8 @@ class MessageParser:
     def deserialize_message(encryption_key: bytes, raw_data: bytes):
         message_type, data = MessageParser.read_uint32(raw_data)
         message_length, data = MessageParser.read_uint32(data)
+        if message_length < 8:
+            raise ValueError("Invalid message: length field too small")
         payload_len = message_length - 8
         if len(data) < payload_len:
             raise ValueError("Not enough bytes in data for the payload")
@@ -794,7 +796,7 @@ class HTTPClient(Client):
             )
 
             loop = asyncio.get_event_loop()
-            resp = await loop.run_in_executor(None, self._blocking_http_req, req, 10.0)
+            resp = await loop.run_in_executor(None, self._blocking_http_req, req, 15.0)
             messages = self.deserialize_messages(resp)
             for message in messages:
                 asyncio.create_task(self.handle_message(message))
@@ -950,14 +952,7 @@ async def main():
             await client.start()
         except Exception as e:
             consecutive_failures += 1
-            exc_type = type(e)
-            tb = e.__traceback__
-            if tb:
-                filename = tb.tb_frame.f_code.co_filename
-                line_no = tb.tb_lineno
-                print(f"[!] Exception Occurred: {exc_type.__module__}.{exc_type.__name__} at {filename}:{line_no}")
-            else:
-                print(f"[!] Exception Occurred: {exc_type.__module__}.{exc_type.__name__}: {e}")
+            print(f'[!] Reconnection failed: {e}')
 
     if hasattr(client, 'close'):
         await client.close()
