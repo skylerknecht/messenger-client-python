@@ -721,7 +721,7 @@ class WSClient(Client):
         self.ssl_context = ssl.create_default_context()
         self.ssl_context.check_hostname = False
         self.ssl_context.verify_mode = ssl.CERT_NONE
-        self.downstream_messages = []
+        self.downstream_messages = asyncio.Queue()
 
     async def close(self):
         await self.session.close()
@@ -744,22 +744,45 @@ class WSClient(Client):
         self.identifier = check_in_msg.messenger_id
 
     async def start(self):
-        while self.downstream_messages:
-            msg = self.downstream_messages.pop(0)
-            downstream_messages = [CheckInMessage(messenger_id=self.identifier), msg]
-            await self.ws.send_bytes(self.serialize_messages(downstream_messages))
+        # One receive loop dispatches messages concurrently; one send loop is the
+        # ONLY sender, so send_bytes calls never interleave. Whichever loop ends
+        # first (disconnect, or a fatal DecryptionError) cancels the other, and
+        # its exception is surfaced to main() for reconnect/stop.
+        recv_task = asyncio.create_task(self._receive_loop())
+        send_task = asyncio.create_task(self._send_loop())
+        try:
+            done, _ = await asyncio.wait(
+                {recv_task, send_task}, return_when=asyncio.FIRST_COMPLETED
+            )
+        finally:
+            for task in (recv_task, send_task):
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(recv_task, send_task, return_exceptions=True)
 
+        for task in done:
+            exc = task.exception()
+            if exc is not None:
+                raise exc
+
+    async def _receive_loop(self):
         async for msg in self.ws:
             messages = self.deserialize_messages(msg.data)
             for message in messages:
                 asyncio.create_task(self.handle_message(message))
 
+    async def _send_loop(self):
+        while True:
+            # Parks here (no CPU) until a message is enqueued.
+            first = await self.downstream_messages.get()
+            batch = [CheckInMessage(messenger_id=self.identifier), first]
+            while not self.downstream_messages.empty():
+                batch.append(self.downstream_messages.get_nowait())
+            await self.ws.send_bytes(self.serialize_messages(batch))
+
     async def send_downstream_message(self, downstream_message):
-        if self.ws and not self.ws.closed:
-            downstream_messages = [CheckInMessage(messenger_id=self.identifier), downstream_message]
-            await self.ws.send_bytes(self.serialize_messages(downstream_messages))
-        else:
-            self.downstream_messages.append(downstream_message)
+        # Producer: just enqueue. The single send loop serializes the socket.
+        await self.downstream_messages.put(downstream_message)
 
 class HTTPClient(Client):
     def __init__(self, server_url, encryption_key, user_agent, proxy):
