@@ -711,6 +711,18 @@ class Client:
     async def send_downstream_message(self, downstream_message):
         raise NotImplementedError
 
+    async def readvertise_forwarders(self):
+        # Re-announce our active remote port forwards so a server that lost its
+        # state (e.g. after a restart) can re-learn them. The server records an
+        # unknown bind as pending for the operator to re-adopt.
+        for forwarder in self.remote_port_forwarders:
+            await self.send_downstream_message(InitiateBINDRep(
+                bind_id=forwarder.identifier,
+                listening_host=forwarder.listening_host,
+                listening_port=forwarder.listening_port,
+                reason=0
+            ))
+
 class WSClient(Client):
     def __init__(self, server_url, encryption_key, user_agent, proxy):
         super().__init__(encryption_key)
@@ -744,6 +756,7 @@ class WSClient(Client):
         self.identifier = check_in_msg.messenger_id
 
     async def start(self):
+        await self.readvertise_forwarders()
         # One receive loop dispatches messages concurrently; one send loop is the
         # ONLY sender, so send_bytes calls never interleave. Whichever loop ends
         # first (disconnect, or a fatal DecryptionError) cancels the other, and
@@ -826,6 +839,7 @@ class HTTPClient(Client):
         self.identifier = check_in_msg.messenger_id
 
     async def start(self):
+        await self.readvertise_forwarders()
         while True:
             to_send = [CheckInMessage(messenger_id=self.identifier)]
             for _ in range(5):
