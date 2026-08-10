@@ -302,7 +302,7 @@ else:
 ### Message Structures ###
 
 CheckInMessage = namedtuple('CheckInMessage', ['messenger_id'])
-InitiateTCPClientReq = namedtuple('InitiateTCPClientReq', ['client_id', 'ip_address', 'port', 'listening_host', 'listening_port'], defaults=['', 0])
+InitiateTCPClientReq = namedtuple('InitiateTCPClientReq', ['client_id', 'ip_address', 'port', 'listening_host', 'listening_port'])
 InitiateTCPClientRep = namedtuple('InitiateTCPClientRep', ['client_id', 'bind_address', 'bind_port', 'address_type', 'reason', 'remote_addr', 'remote_port'])
 SendDataMessage = namedtuple('SendDataMessage', ['client_id', 'data'])
 InitiateBINDReq = namedtuple('InitiateBINDReq', ['bind_id', 'listening_host', 'listening_port', 'destination_host', 'destination_port'])
