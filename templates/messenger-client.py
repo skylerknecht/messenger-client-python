@@ -569,17 +569,15 @@ class Client:
         return data
 
     async def handle_bind(self, message):
-        # Empty listening host = STOP: tear down the forwarder with this bind_id
-        # (kill its connections, close its listener) and confirm it is gone.
+        # Empty listening host = STOP: tear down the forwarder immediately.
+        # The serve_forever watcher fires report_gone which sends the
+        # empty-host BindRep to the server.
         if message.listening_host == '':
             existing = next((f for f in self.remote_port_forwarders if f.identifier == message.bind_id), None)
             if existing is not None:
-                existing.close_all_clients()
                 existing.stop()
+                existing.close_all_clients()
                 self.remote_port_forwarders.remove(existing)
-                await self.send_downstream_message(InitiateBINDRep(
-                    bind_id=message.bind_id, listening_host='', listening_port=0, reason=0
-                ))
             return
 
         # Real listening host = bind request. Idempotent if we already hold it.
@@ -891,6 +889,7 @@ class RemotePortForwarder:
         self.destination_port = int(destination_port)
         self.server = None
         self.client_ids = []
+        self._gone = False
 
     async def handle_client(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         tcp_client = TcpClient(reader, writer)
@@ -919,7 +918,30 @@ class RemotePortForwarder:
             print(f'[!] {self.listening_host}:{self.listening_port} is already in use.')
             return False
         print(f'[+] Remote Port Forwarder listening on {self.listening_host}:{self.listening_port}')
+        asyncio.create_task(self._serve_forever())
         return True
+
+    async def _serve_forever(self):
+        try:
+            await self.server.serve_forever()
+        except Exception:
+            pass
+        finally:
+            await self.report_gone()
+
+    async def report_gone(self):
+        if self._gone:
+            return
+        self._gone = True
+        if self in self.messenger.remote_port_forwarders:
+            self.messenger.remote_port_forwarders.remove(self)
+        self.close_all_clients()
+        try:
+            await self.messenger.send_downstream_message(InitiateBINDRep(
+                bind_id=self.identifier, listening_host='', listening_port=0, reason=1
+            ))
+        except Exception:
+            pass
 
     def close_all_clients(self):
         for client_id in self.client_ids:
