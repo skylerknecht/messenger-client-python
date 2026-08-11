@@ -302,7 +302,7 @@ else:
 ### Message Structures ###
 
 CheckInMessage = namedtuple('CheckInMessage', ['messenger_id'])
-InitiateTCPClientReq = namedtuple('InitiateTCPClientReq', ['client_id', 'ip_address', 'port', 'listening_host', 'listening_port'])
+InitiateTCPClientReq = namedtuple('InitiateTCPClientReq', ['client_id', 'destination_host', 'destination_port', 'listening_host', 'listening_port'])
 InitiateTCPClientRep = namedtuple('InitiateTCPClientRep', ['client_id', 'bind_address', 'bind_port', 'address_type', 'reason', 'remote_addr', 'remote_port'])
 SendDataMessage = namedtuple('SendDataMessage', ['client_id', 'data'])
 InitiateBINDReq = namedtuple('InitiateBINDReq', ['bind_id', 'listening_host', 'listening_port', 'destination_host', 'destination_port'])
@@ -330,15 +330,15 @@ class MessageParser:
     @staticmethod
     def parse_initiate_tcp_client_req(value: bytes) -> InitiateTCPClientReq:
         client_id, value = MessageParser.read_string(value)
-        ip_address, value = MessageParser.read_string(value)
-        port, value = MessageParser.read_uint32(value)
+        destination_host, value = MessageParser.read_string(value)
+        destination_port, value = MessageParser.read_uint32(value)
         # Optional listening endpoint appended by a remote port forwarder.
         listening_host = ''
         listening_port = 0
         if len(value) > 0:
             listening_host, value = MessageParser.read_string(value)
             listening_port, value = MessageParser.read_uint32(value)
-        return InitiateTCPClientReq(client_id=client_id, ip_address=ip_address, port=port,
+        return InitiateTCPClientReq(client_id=client_id, destination_host=destination_host, destination_port=destination_port,
                                     listening_host=listening_host, listening_port=listening_port)
 
     @staticmethod
@@ -439,7 +439,7 @@ class MessageBuilder:
         if isinstance(msg, InitiateTCPClientReq):
             message_type = 0x01
             value = encrypt(encryption_key, MessageBuilder.build_initiate_tcp_client_req(
-                msg.client_id, msg.ip_address, msg.port, msg.listening_host, msg.listening_port
+                msg.client_id, msg.destination_host, msg.destination_port, msg.listening_host, msg.listening_port
             ))
         elif isinstance(msg, InitiateTCPClientRep):
             message_type = 0x02
@@ -487,12 +487,12 @@ class MessageBuilder:
         return MessageBuilder.build_string(messenger_id)
 
     @staticmethod
-    def build_initiate_tcp_client_req(client_id: str, ip_address: str, port: int,
+    def build_initiate_tcp_client_req(client_id: str, destination_host: str, destination_port: int,
                                       listening_host: str = '', listening_port: int = 0) -> bytes:
         result = (
             MessageBuilder.build_string(client_id) +
-            MessageBuilder.build_string(ip_address) +
-            struct.pack('!I', port)
+            MessageBuilder.build_string(destination_host) +
+            struct.pack('!I', destination_port)
         )
         if listening_host:
             result += MessageBuilder.build_string(listening_host) + struct.pack('!I', listening_port)
@@ -595,9 +595,9 @@ class Client:
             )
             success = await forwarder.start()
             if not success:
-                # Bind failed → report GONE (empty host); reason carries why.
+                # Bind failed → report GONE with real host:port.
                 await self.send_downstream_message(InitiateBINDRep(
-                    bind_id=message.bind_id, listening_host='', listening_port=0, reason=1
+                    bind_id=message.bind_id, listening_host=message.listening_host, listening_port=message.listening_port, reason=1
                 ))
                 return
             self.remote_port_forwarders.append(forwarder)
@@ -607,7 +607,7 @@ class Client:
             ))
         except Exception:
             await self.send_downstream_message(InitiateBINDRep(
-                bind_id=message.bind_id, listening_host='', listening_port=0, reason=1
+                bind_id=message.bind_id, listening_host=message.listening_host, listening_port=message.listening_port, reason=1
             ))
 
     async def handle_initiate_tcp_client_req(self, client_id, ip, port):
@@ -688,7 +688,7 @@ class Client:
     async def handle_message(self, message):
         if isinstance(message, InitiateTCPClientReq):
             await self.handle_initiate_tcp_client_req(
-                message.client_id, message.ip_address, message.port
+                message.client_id, message.destination_host, message.destination_port
             )
         elif isinstance(message, InitiateTCPClientRep):
             tcp_client = self.tcp_clients.get(message.client_id)
@@ -771,11 +771,6 @@ class WSClient(Client):
         self.identifier = check_in_msg.messenger_id
 
     async def start(self):
-        await self.readvertise_forwarders()
-        # One receive loop dispatches messages concurrently; one send loop is the
-        # ONLY sender, so send_bytes calls never interleave. Whichever loop ends
-        # first (disconnect, or a fatal DecryptionError) cancels the other, and
-        # its exception is surfaced to main() for reconnect/stop.
         await self.readvertise_forwarders()
         recv_task = asyncio.create_task(self._receive_loop())
         send_task = asyncio.create_task(self._send_loop())
@@ -902,8 +897,8 @@ class RemotePortForwarder:
 
         downstream_message = InitiateTCPClientReq(
             client_id=client_id,
-            ip_address=self.destination_host,
-            port=self.destination_port,
+            destination_host=self.destination_host,
+            destination_port=self.destination_port,
             listening_host=self.listening_host,
             listening_port=self.listening_port
         )
@@ -938,7 +933,7 @@ class RemotePortForwarder:
         self.close_all_clients()
         try:
             await self.messenger.send_downstream_message(InitiateBINDRep(
-                bind_id=self.identifier, listening_host='', listening_port=0, reason=1
+                bind_id=self.identifier, listening_host=self.listening_host, listening_port=self.listening_port, reason=1
             ))
         except Exception:
             pass
@@ -1027,7 +1022,6 @@ async def main():
         try:
             await client.connect()
             print(f'[+] Connected to {candidate_url}')
-            await client.start()
             break
         except DecryptionError:
             print('[!] Decryption failed — the encryption key is likely incorrect. The messenger cannot decrypt server traffic and is stopping.')
@@ -1042,6 +1036,16 @@ async def main():
     if client is None:
         print('[!] All connection attempts failed.')
         return
+
+    try:
+        await client.start()
+    except DecryptionError:
+        print('[!] Decryption failed — the encryption key is likely incorrect. The messenger cannot decrypt server traffic and is stopping.')
+        if hasattr(client, 'close'):
+            await client.close()
+        return
+    except Exception as e:
+        print(f'[!] Disconnected: {e}')
 
     if retry_attempts <= 0:
         return
