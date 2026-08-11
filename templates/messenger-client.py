@@ -1053,6 +1053,8 @@ async def main():
     sleep_time = retry_duration / retry_attempts
     consecutive_failures = 0
     while consecutive_failures < retry_attempts:
+        consecutive_failures += 1
+        print(f'[*] Attempting to reconnect (attempt {consecutive_failures}/{retry_attempts})')
         await asyncio.sleep(sleep_time)
         try:
             await client.connect()
@@ -1063,7 +1065,6 @@ async def main():
             print('[!] Decryption failed — the encryption key is likely incorrect. The messenger cannot decrypt server traffic and is stopping.')
             break
         except Exception as e:
-            consecutive_failures += 1
             print(f'[!] Reconnection failed: {e}')
 
     if hasattr(client, 'close'):
