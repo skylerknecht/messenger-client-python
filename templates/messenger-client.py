@@ -753,6 +753,13 @@ class WSClient(Client):
     async def close(self):
         await self.session.close()
 
+    async def cleanup(self):
+        if hasattr(self, 'ws') and self.ws and not self.ws.closed:
+            await self.ws.close()
+        if self.session and not self.session.closed:
+            await self.session.close()
+        self.session = aiohttp.ClientSession(headers=self.headers)
+
     async def connect(self):
         self.ws = await self.session.ws_connect(
             self.server_url,
@@ -866,6 +873,9 @@ class HTTPClient(Client):
 
             loop = asyncio.get_event_loop()
             resp = await loop.run_in_executor(None, self._blocking_http_req, req, 15.0)
+            if not resp:
+                await asyncio.sleep(0.1)
+                continue
             messages = self.deserialize_messages(resp)
             for message in messages:
                 asyncio.create_task(self.handle_message(message))
@@ -910,7 +920,7 @@ class RemotePortForwarder:
                 self.handle_client, self.listening_host, self.listening_port
             )
         except OSError:
-            print(f'[!] {self.listening_host}:{self.listening_port} is already in use.')
+            print(f'[!] {self.listening_host}:{self.listening_port} is already in use or encountered an error')
             return False
         print(f'[+] Remote Port Forwarder listening on {self.listening_host}:{self.listening_port}')
         asyncio.create_task(self._serve_forever())
@@ -1017,7 +1027,7 @@ async def main():
             print(f'[*] Attempting to connect over {attempt.upper()}')
             client = HTTPClient(candidate_url, encryption_key, user_agent, proxy)
         else:
-            print(f"[!] Unsupported scheme {attempt.upper()}")
+            print(f"[!] Unsupported scheme: {attempt}")
             continue
         try:
             await client.connect()
@@ -1057,6 +1067,8 @@ async def main():
         print(f'[*] Attempting to reconnect (attempt {consecutive_failures}/{retry_attempts})')
         await asyncio.sleep(sleep_time)
         try:
+            if hasattr(client, 'cleanup'):
+                await client.cleanup()
             await client.connect()
             print(f'[+] Reconnected')
             consecutive_failures = 0
