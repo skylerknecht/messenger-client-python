@@ -816,6 +816,9 @@ class WSClient(Client):
     async def _receive_loop(self):
         async for msg in self.ws:
             messages = self.deserialize_messages(msg.data)
+            if any(isinstance(m, CheckOutMessage) for m in messages):
+                await self.handle_message(CheckOutMessage())
+                break
             for message in messages:
                 asyncio.create_task(self.handle_message(message))
             if self.killed:
@@ -896,6 +899,9 @@ class HTTPClient(Client):
                 await asyncio.sleep(0.1)
                 continue
             messages = self.deserialize_messages(resp)
+            if any(isinstance(m, CheckOutMessage) for m in messages):
+                await self.handle_message(CheckOutMessage())
+                break
             for message in messages:
                 asyncio.create_task(self.handle_message(message))
             await asyncio.sleep(0.1)
