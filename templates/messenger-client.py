@@ -307,6 +307,7 @@ InitiateTCPClientRep = namedtuple('InitiateTCPClientRep', ['client_id', 'bind_ad
 SendDataMessage = namedtuple('SendDataMessage', ['client_id', 'data'])
 InitiateBINDReq = namedtuple('InitiateBINDReq', ['bind_id', 'listening_host', 'listening_port', 'destination_host', 'destination_port'])
 InitiateBINDRep = namedtuple('InitiateBINDRep', ['bind_id', 'listening_host', 'listening_port', 'reason'])
+CheckOutMessage = namedtuple('CheckOutMessage', [])
 
 class MessageParser:
     @staticmethod
@@ -428,6 +429,8 @@ class MessageParser:
         elif message_type == 0x06:
             decrypted = MessageParser._decrypt(encryption_key, payload)
             parsed_msg = MessageParser.parse_initiate_bind_rep(decrypted)
+        elif message_type == 0x07:
+            parsed_msg = CheckOutMessage()
         else:
             raise ValueError(f"Unknown message type: {hex(message_type)}")
 
@@ -545,6 +548,7 @@ class Client:
         self.identifier = ''
         self.tcp_clients = {}
         self.remote_port_forwarders = []
+        self.killed = False
 
     def deserialize_messages(self, data: bytes):
         messages = []
@@ -713,6 +717,19 @@ class Client:
             await tcp_client.writer.drain()
         elif isinstance(message, InitiateBINDReq):
             await self.handle_bind(message)
+        elif isinstance(message, CheckOutMessage):
+            print('[!] Kill signal received')
+            for forwarder in list(self.remote_port_forwarders):
+                forwarder.stop()
+                forwarder.close_all_clients()
+            self.remote_port_forwarders.clear()
+            for client_id, tcp_client in list(self.tcp_clients.items()):
+                try:
+                    tcp_client.writer.close()
+                except Exception:
+                    pass
+            self.tcp_clients.clear()
+            self.killed = True
         else:
             print(f"[!] Received unknown message type: {type(message).__name__}")
 
@@ -801,6 +818,8 @@ class WSClient(Client):
             messages = self.deserialize_messages(msg.data)
             for message in messages:
                 asyncio.create_task(self.handle_message(message))
+            if self.killed:
+                break
 
     async def _send_loop(self):
         while True:
@@ -858,7 +877,7 @@ class HTTPClient(Client):
 
     async def start(self):
         await self.readvertise_forwarders()
-        while True:
+        while not self.killed:
             to_send = [CheckInMessage(messenger_id=self.identifier)]
             for _ in range(5):
                  if self.downstream_messages.empty():
@@ -1057,6 +1076,9 @@ async def main():
     except Exception as e:
         print(f'[!] Disconnected: {e}')
 
+    if client.killed:
+        return
+
     if retry_attempts <= 0:
         return
 
@@ -1078,6 +1100,9 @@ async def main():
             break
         except Exception as e:
             print(f'[!] Reconnection failed: {e}')
+
+        if client.killed:
+            break
 
     if hasattr(client, 'close'):
         await client.close()
