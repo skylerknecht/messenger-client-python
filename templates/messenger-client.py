@@ -37,7 +37,7 @@ PROXY = "{{ proxy }}"
 RETRY_DURATION = {{ retry_duration }}
 RETRY_ATTEMPTS = {{ retry_attempts }}
 
-TcpClient = namedtuple('TcpClient', 'reader writer')
+TcpClient = namedtuple('TcpClient', 'reader writer bind_id')
 alphanumeric = list(string.ascii_letters + string.digits)
 
 def alphanumeric_identifier(length: int = 10) -> str:
@@ -575,14 +575,11 @@ class Client:
 
     async def handle_bind(self, message):
         # Empty listening host = STOP: tear down the forwarder immediately.
-        # The serve_forever watcher fires report_gone which sends the
-        # empty-host BindRep to the server.
+        # The accept loop cleanup owns list removal and client teardown.
         if message.listening_host == '':
             existing = next((f for f in self.remote_port_forwarders if f.identifier == message.bind_id), None)
             if existing is not None:
                 existing.stop()
-                existing.close_all_clients()
-                self.remote_port_forwarders.remove(existing)
             return
 
         # Real listening host = bind request. Idempotent if we already hold it.
@@ -600,28 +597,30 @@ class Client:
             )
             success = await forwarder.start()
             if not success:
-                # Bind failed → report GONE with real host:port.
-                await self.send_upstream_message(InitiateBINDRep(
-                    bind_id=message.bind_id, listening_host=message.listening_host, listening_port=message.listening_port, reason=1
-                ))
+                if not self.killed:
+                    await self.send_upstream_message(InitiateBINDRep(
+                        bind_id=message.bind_id, listening_host=message.listening_host, listening_port=message.listening_port, reason=1
+                    ))
                 return
-            self.remote_port_forwarders.append(forwarder)
             await self.send_upstream_message(InitiateBINDRep(
                 bind_id=message.bind_id, listening_host=message.listening_host,
                 listening_port=message.listening_port, reason=0
             ))
         except Exception:
-            await self.send_upstream_message(InitiateBINDRep(
-                bind_id=message.bind_id, listening_host=message.listening_host, listening_port=message.listening_port, reason=1
-            ))
+            if not self.killed:
+                await self.send_upstream_message(InitiateBINDRep(
+                    bind_id=message.bind_id, listening_host=message.listening_host, listening_port=message.listening_port, reason=1
+                ))
 
     async def handle_initiate_tcp_client_req(self, client_id, ip, port):
+        if self.killed:
+            return
         try:
             reader, writer = await asyncio.wait_for(
                 asyncio.open_connection(ip, port),
                 timeout=5
             )
-            tcp_client = TcpClient(reader, writer)
+            tcp_client = TcpClient(reader, writer, None)
             self.tcp_clients[client_id] = tcp_client
 
             bind_info = writer.get_extra_info("sockname")
@@ -662,11 +661,12 @@ class Client:
         else:
             return
 
-        upstream_message = InitiateTCPClientRep(
-            client_id=client_id, bind_address="0.0.0.0", bind_port=0,
-            address_type=1, reason=reason, remote_addr="0.0.0.0", remote_port=0
-        )
-        await self.send_upstream_message(upstream_message)
+        if not self.killed:
+            upstream_message = InitiateTCPClientRep(
+                client_id=client_id, bind_address="0.0.0.0", bind_port=0,
+                address_type=1, reason=reason, remote_addr="0.0.0.0", remote_port=0
+            )
+            await self.send_upstream_message(upstream_message)
 
     async def stream(self, client_identifier):
         tcp_client = self.tcp_clients.get(client_identifier)
@@ -691,11 +691,10 @@ class Client:
                     upstream_message = SendDataMessage(client_id=client_identifier, data=b'')
                     await self.send_upstream_message(upstream_message)
 
-    async def handle_message(self, message):
+    async def dispatch_message(self, message):
         if isinstance(message, InitiateTCPClientReq):
-            await self.handle_initiate_tcp_client_req(
-                message.client_id, message.destination_host, message.destination_port
-            )
+            asyncio.create_task(self.handle_initiate_tcp_client_req(
+                message.client_id, message.destination_host, message.destination_port))
         elif isinstance(message, InitiateTCPClientRep):
             tcp_client = self.tcp_clients.get(message.client_id)
             if not tcp_client:
@@ -718,22 +717,32 @@ class Client:
             tcp_client.writer.write(message.data)
             await tcp_client.writer.drain()
         elif isinstance(message, InitiateBINDReq):
-            await self.handle_bind(message)
+            asyncio.create_task(self.handle_bind(message))
+        elif isinstance(message, CheckInMessage):
+            self.identifier = message.messenger_id
         elif isinstance(message, CheckOutMessage):
-            print('[!] Kill signal received')
-            self.killed = True
-            for forwarder in list(self.remote_port_forwarders):
-                forwarder.stop()
-                forwarder.close_all_clients()
-            self.remote_port_forwarders.clear()
-            for client_id, tcp_client in list(self.tcp_clients.items()):
+            self.handle_checkout()
+
+    def handle_checkout(self):
+        print('[!] Kill signal received')
+        self.killed = True
+        for forwarder in list(self.remote_port_forwarders):
+            forwarder.stop()
+        for client_id, tcp_client in list(self.tcp_clients.items()):
+            self.tcp_clients.pop(client_id, None)
+            try:
+                tcp_client.writer.close()
+            except Exception:
+                pass
+
+    def close_connections_for_bind(self, bind_id):
+        for client_id, tcp_client in list(self.tcp_clients.items()):
+            if getattr(tcp_client, 'bind_id', None) == bind_id:
+                self.tcp_clients.pop(client_id, None)
                 try:
                     tcp_client.writer.close()
                 except Exception:
                     pass
-            self.tcp_clients.clear()
-        else:
-            print(f"[!] Received unknown message type: {type(message).__name__}")
 
     async def connect(self):
         raise NotImplementedError
@@ -819,10 +828,10 @@ class WSClient(Client):
         async for msg in self.ws:
             messages = self.deserialize_messages(msg.data)
             if any(isinstance(m, CheckOutMessage) for m in messages):
-                await self.handle_message(CheckOutMessage())
+                self.handle_checkout()
                 break
             for message in messages:
-                asyncio.create_task(self.handle_message(message))
+                await self.dispatch_message(message)
             if self.killed:
                 break
 
@@ -908,10 +917,10 @@ class HTTPClient(Client):
             self._pending.clear()
             messages = self.deserialize_messages(resp)
             if any(isinstance(m, CheckOutMessage) for m in messages):
-                await self.handle_message(CheckOutMessage())
+                self.handle_checkout()
                 break
             for message in messages:
-                asyncio.create_task(self.handle_message(message))
+                await self.dispatch_message(message)
             await asyncio.sleep(0.1)
 
     async def send_upstream_message(self, upstream_message):
@@ -926,13 +935,13 @@ class RemotePortForwarder:
         self.destination_host = destination_host
         self.destination_port = int(destination_port)
         self.server = None
-        self.client_ids = []
-        self._gone = False
 
     async def handle_client(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
-        tcp_client = TcpClient(reader, writer)
+        if self.messenger.killed:
+            writer.close()
+            return
+        tcp_client = TcpClient(reader, writer, self.identifier)
         client_id = alphanumeric_identifier()
-        self.client_ids.append(client_id)
 
         writer.transport.pause_reading()
 
@@ -956,6 +965,7 @@ class RemotePortForwarder:
             print(f'[!] {self.listening_host}:{self.listening_port} is already in use or encountered an error')
             return False
         print(f'[+] Remote Port Forwarder listening on {self.listening_host}:{self.listening_port}')
+        self.messenger.remote_port_forwarders.append(self)
         asyncio.create_task(self._serve_forever())
         return True
 
@@ -965,30 +975,20 @@ class RemotePortForwarder:
         except Exception:
             pass
         finally:
-            await self.report_gone()
+            await self.cleanup()
 
-    async def report_gone(self):
-        if self._gone:
+    async def cleanup(self):
+        if self not in self.messenger.remote_port_forwarders:
             return
-        self._gone = True
-        if self in self.messenger.remote_port_forwarders:
-            self.messenger.remote_port_forwarders.remove(self)
-        self.close_all_clients()
-        try:
-            await self.messenger.send_upstream_message(InitiateBINDRep(
-                bind_id=self.identifier, listening_host=self.listening_host, listening_port=self.listening_port, reason=1
-            ))
-        except Exception:
-            pass
-
-    def close_all_clients(self):
-        for client_id in self.client_ids:
-            tcp_client = self.messenger.tcp_clients.pop(client_id, None)
-            if tcp_client is not None:
-                try:
-                    tcp_client.writer.close()
-                except Exception:
-                    pass
+        self.messenger.remote_port_forwarders.remove(self)
+        self.messenger.close_connections_for_bind(self.identifier)
+        if not self.messenger.killed:
+            try:
+                await self.messenger.send_upstream_message(InitiateBINDRep(
+                    bind_id=self.identifier, listening_host=self.listening_host,
+                    listening_port=self.listening_port, reason=1))
+            except Exception:
+                pass
 
     def stop(self):
         if self.server is not None:
