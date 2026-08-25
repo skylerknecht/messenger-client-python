@@ -9,6 +9,7 @@ import ssl
 import struct
 import socket
 import string
+import sys
 
 from collections import namedtuple
 from urllib import request
@@ -586,7 +587,7 @@ class Client:
 
         # Real listening host = bind request. Idempotent if we already hold it.
         if any(f.identifier == message.bind_id for f in self.remote_port_forwarders):
-            await self.send_downstream_message(InitiateBINDRep(
+            await self.send_upstream_message(InitiateBINDRep(
                 bind_id=message.bind_id, listening_host=message.listening_host,
                 listening_port=message.listening_port, reason=0
             ))
@@ -600,17 +601,17 @@ class Client:
             success = await forwarder.start()
             if not success:
                 # Bind failed → report GONE with real host:port.
-                await self.send_downstream_message(InitiateBINDRep(
+                await self.send_upstream_message(InitiateBINDRep(
                     bind_id=message.bind_id, listening_host=message.listening_host, listening_port=message.listening_port, reason=1
                 ))
                 return
             self.remote_port_forwarders.append(forwarder)
-            await self.send_downstream_message(InitiateBINDRep(
+            await self.send_upstream_message(InitiateBINDRep(
                 bind_id=message.bind_id, listening_host=message.listening_host,
                 listening_port=message.listening_port, reason=0
             ))
         except Exception:
-            await self.send_downstream_message(InitiateBINDRep(
+            await self.send_upstream_message(InitiateBINDRep(
                 bind_id=message.bind_id, listening_host=message.listening_host, listening_port=message.listening_port, reason=1
             ))
 
@@ -635,11 +636,11 @@ class Client:
             family = sock.family
             atype = 1 if family == socket.AF_INET else 4
 
-            downstream_message = InitiateTCPClientRep(
+            upstream_message = InitiateTCPClientRep(
                 client_id=client_id, bind_address=bind_addr, bind_port=bind_port,
                 address_type=atype, reason=0, remote_addr=remote_addr, remote_port=remote_port
             )
-            await self.send_downstream_message(downstream_message)
+            await self.send_upstream_message(upstream_message)
             asyncio.create_task(self.stream(client_id))
 
         except socket.gaierror:
@@ -661,11 +662,11 @@ class Client:
         else:
             return
 
-        downstream_message = InitiateTCPClientRep(
+        upstream_message = InitiateTCPClientRep(
             client_id=client_id, bind_address="0.0.0.0", bind_port=0,
             address_type=1, reason=reason, remote_addr="0.0.0.0", remote_port=0
         )
-        await self.send_downstream_message(downstream_message)
+        await self.send_upstream_message(upstream_message)
 
     async def stream(self, client_identifier):
         tcp_client = self.tcp_clients.get(client_identifier)
@@ -676,8 +677,8 @@ class Client:
                 msg = await tcp_client.reader.read(4096)
                 if not msg:
                     break
-                downstream_message = SendDataMessage(client_id=client_identifier, data=msg)
-                await self.send_downstream_message(downstream_message)
+                upstream_message = SendDataMessage(client_id=client_identifier, data=msg)
+                await self.send_upstream_message(upstream_message)
         except (EOFError, ConnectionResetError, ConnectionAbortedError):
             pass
         except Exception:
@@ -686,8 +687,9 @@ class Client:
             removed = self.tcp_clients.pop(client_identifier, None)
             if removed is not None:
                 removed.writer.close()
-                downstream_message = SendDataMessage(client_id=client_identifier, data=b'')
-                await self.send_downstream_message(downstream_message)
+                if not self.killed:
+                    upstream_message = SendDataMessage(client_id=client_identifier, data=b'')
+                    await self.send_upstream_message(upstream_message)
 
     async def handle_message(self, message):
         if isinstance(message, InitiateTCPClientReq):
@@ -719,6 +721,7 @@ class Client:
             await self.handle_bind(message)
         elif isinstance(message, CheckOutMessage):
             print('[!] Kill signal received')
+            self.killed = True
             for forwarder in list(self.remote_port_forwarders):
                 forwarder.stop()
                 forwarder.close_all_clients()
@@ -729,7 +732,6 @@ class Client:
                 except Exception:
                     pass
             self.tcp_clients.clear()
-            self.killed = True
         else:
             print(f"[!] Received unknown message type: {type(message).__name__}")
 
@@ -739,7 +741,7 @@ class Client:
     async def start(self):
         raise NotImplementedError
 
-    async def send_downstream_message(self, downstream_message):
+    async def send_upstream_message(self, upstream_message):
         raise NotImplementedError
 
     async def readvertise_forwarders(self):
@@ -748,7 +750,7 @@ class Client:
         # its state — e.g. after a restart — re-learns them (as orphans awaiting
         # a destination); a server that already knows them just re-confirms.
         for forwarder in list(self.remote_port_forwarders):
-            await self.send_downstream_message(InitiateBINDRep(
+            await self.send_upstream_message(InitiateBINDRep(
                 bind_id=forwarder.identifier,
                 listening_host=forwarder.listening_host,
                 listening_port=forwarder.listening_port,
@@ -765,7 +767,7 @@ class WSClient(Client):
         self.ssl_context = ssl.create_default_context()
         self.ssl_context.check_hostname = False
         self.ssl_context.verify_mode = ssl.CERT_NONE
-        self.downstream_messages = asyncio.Queue()
+        self.upstream_messages = asyncio.Queue()
 
     async def close(self):
         await self.session.close()
@@ -827,15 +829,15 @@ class WSClient(Client):
     async def _send_loop(self):
         while True:
             # Parks here (no CPU) until a message is enqueued.
-            first = await self.downstream_messages.get()
+            first = await self.upstream_messages.get()
             batch = [CheckInMessage(messenger_id=self.identifier), first]
-            while not self.downstream_messages.empty():
-                batch.append(self.downstream_messages.get_nowait())
+            while not self.upstream_messages.empty():
+                batch.append(self.upstream_messages.get_nowait())
             await self.ws.send_bytes(self.serialize_messages(batch))
 
-    async def send_downstream_message(self, downstream_message):
+    async def send_upstream_message(self, upstream_message):
         # Producer: just enqueue. The single send loop serializes the socket.
-        await self.downstream_messages.put(downstream_message)
+        await self.upstream_messages.put(upstream_message)
 
 class HTTPClient(Client):
     def __init__(self, server_url, encryption_key, user_agent, proxy):
@@ -847,7 +849,8 @@ class HTTPClient(Client):
         self.ssl_context = ssl.create_default_context()
         self.ssl_context.check_hostname = False
         self.ssl_context.verify_mode = ssl.CERT_NONE
-        self.downstream_messages = asyncio.Queue()
+        self.upstream_messages = asyncio.Queue()
+        self._pending = []
         proxy_handler = request.ProxyHandler({
             'http': proxy,
             'https': proxy
@@ -862,11 +865,11 @@ class HTTPClient(Client):
             return resp.read()
 
     async def connect(self):
-        downstream_messages = [CheckInMessage(messenger_id=self.identifier)]
+        upstream_messages = [CheckInMessage(messenger_id=self.identifier)]
         req = request.Request(
             self.server_url,
             headers=self.headers,
-            data=self.serialize_messages(downstream_messages)
+            data=self.serialize_messages(upstream_messages)
         )
         loop = asyncio.get_event_loop()
         resp = await loop.run_in_executor(None, self._blocking_http_req, req, 10.0)
@@ -881,11 +884,14 @@ class HTTPClient(Client):
     async def start(self):
         await self.readvertise_forwarders()
         while not self.killed:
+            if not self._pending:
+                for _ in range(5):
+                    if self.upstream_messages.empty():
+                        break
+                    self._pending.append(await self.upstream_messages.get())
+
             to_send = [CheckInMessage(messenger_id=self.identifier)]
-            for _ in range(5):
-                 if self.downstream_messages.empty():
-                     break
-                 to_send.append(await self.downstream_messages.get())
+            to_send.extend(self._pending)
 
             req = request.Request(
                 self.server_url,
@@ -898,6 +904,8 @@ class HTTPClient(Client):
             if not resp:
                 await asyncio.sleep(0.1)
                 continue
+
+            self._pending.clear()
             messages = self.deserialize_messages(resp)
             if any(isinstance(m, CheckOutMessage) for m in messages):
                 await self.handle_message(CheckOutMessage())
@@ -906,8 +914,8 @@ class HTTPClient(Client):
                 asyncio.create_task(self.handle_message(message))
             await asyncio.sleep(0.1)
 
-    async def send_downstream_message(self, downstream_message):
-        await self.downstream_messages.put(downstream_message)
+    async def send_upstream_message(self, upstream_message):
+        await self.upstream_messages.put(upstream_message)
 
 class RemotePortForwarder:
     def __init__(self, messenger, bind_id, listening_host, listening_port, destination_host, destination_port):
@@ -930,14 +938,14 @@ class RemotePortForwarder:
 
         self.messenger.tcp_clients[client_id] = tcp_client
 
-        downstream_message = InitiateTCPClientReq(
+        upstream_message = InitiateTCPClientReq(
             client_id=client_id,
             destination_host=self.destination_host,
             destination_port=self.destination_port,
             listening_host=self.listening_host,
             listening_port=self.listening_port
         )
-        await self.messenger.send_downstream_message(downstream_message)
+        await self.messenger.send_upstream_message(upstream_message)
 
     async def start(self):
         try:
@@ -967,7 +975,7 @@ class RemotePortForwarder:
             self.messenger.remote_port_forwarders.remove(self)
         self.close_all_clients()
         try:
-            await self.messenger.send_downstream_message(InitiateBINDRep(
+            await self.messenger.send_upstream_message(InitiateBINDRep(
                 bind_id=self.identifier, listening_host=self.listening_host, listening_port=self.listening_port, reason=1
             ))
         except Exception:
