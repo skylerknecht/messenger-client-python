@@ -752,6 +752,16 @@ class Client:
                 except Exception:
                     pass
 
+    async def cleanup(self):
+        for forwarder in list(self.remote_port_forwarders):
+            forwarder.stop()
+        for tcp_client in list(self.tcp_clients.values()):
+            tcp_client.writer.close()
+        await self.close_transport()
+
+    async def close_transport(self):
+        raise NotImplementedError
+
     async def connect(self):
         raise NotImplementedError
 
@@ -786,10 +796,11 @@ class WSClient(Client):
         self.ssl_context.verify_mode = ssl.CERT_NONE
         self.upstream_messages = asyncio.Queue()
 
-    async def close(self):
-        await self.session.close()
+    async def close_transport(self):
+        if self.session and not self.session.closed:
+            await self.session.close()
 
-    async def cleanup(self):
+    async def reset_transport(self):
         if hasattr(self, 'ws') and self.ws and not self.ws.closed:
             await self.ws.close()
         if self.session and not self.session.closed:
@@ -875,6 +886,9 @@ class HTTPClient(Client):
 
         https_handler = request.HTTPSHandler(context=self.ssl_context)
         self.opener = request.build_opener(proxy_handler, https_handler)
+
+    async def close_transport(self):
+        pass
 
     def _blocking_http_req(self, req, timeout = 10.0):
         with self.opener.open(req, timeout=timeout) as resp:
@@ -1098,45 +1112,43 @@ async def main():
         return
 
     try:
-        await client.start()
-    except DecryptionError:
-        print('[!] Decryption failed — the encryption key is likely incorrect. The messenger cannot decrypt server traffic and is stopping.')
-        if hasattr(client, 'close'):
-            await client.close()
-        return
-    except Exception as e:
-        print(f'[!] Disconnected: {e}')
-
-    if client.killed:
-        return
-
-    if retry_attempts <= 0:
-        return
-
-    sleep_time = retry_duration / retry_attempts
-    consecutive_failures = 0
-    while consecutive_failures < retry_attempts:
-        consecutive_failures += 1
-        print(f'[*] Attempting to reconnect (attempt {consecutive_failures}/{retry_attempts})')
-        await asyncio.sleep(sleep_time)
         try:
-            if hasattr(client, 'cleanup'):
-                await client.cleanup()
-            await client.connect()
-            print(f'[+] Reconnected')
-            consecutive_failures = 0
             await client.start()
         except DecryptionError:
             print('[!] Decryption failed — the encryption key is likely incorrect. The messenger cannot decrypt server traffic and is stopping.')
-            break
+            return
         except Exception as e:
-            print(f'[!] Reconnection failed: {e}')
+            print(f'[!] Disconnected: {e}')
 
         if client.killed:
-            break
+            return
 
-    if hasattr(client, 'close'):
-        await client.close()
+        if retry_attempts <= 0:
+            return
+
+        sleep_time = retry_duration / retry_attempts
+        consecutive_failures = 0
+        while consecutive_failures < retry_attempts:
+            consecutive_failures += 1
+            print(f'[*] Attempting to reconnect (attempt {consecutive_failures}/{retry_attempts})')
+            await asyncio.sleep(sleep_time)
+            try:
+                if hasattr(client, 'reset_transport'):
+                    await client.reset_transport()
+                await client.connect()
+                print(f'[+] Reconnected')
+                consecutive_failures = 0
+                await client.start()
+            except DecryptionError:
+                print('[!] Decryption failed — the encryption key is likely incorrect. The messenger cannot decrypt server traffic and is stopping.')
+                break
+            except Exception as e:
+                print(f'[!] Reconnection failed: {e}')
+
+            if client.killed:
+                break
+    finally:
+        await client.cleanup()
 
 {% if non_main_thread %}
 def run_coro_in_thread(coro):
