@@ -574,6 +574,9 @@ class Client:
         return data
 
     async def handle_bind(self, message):
+        if self.killed:
+            return
+
         # Empty listening host = STOP: tear down the forwarder immediately.
         # The accept loop cleanup owns list removal and client teardown.
         if message.listening_host == '':
@@ -602,6 +605,9 @@ class Client:
                         bind_id=message.bind_id, listening_host=message.listening_host, listening_port=message.listening_port, reason=1
                     ))
                 return
+            if self.killed:
+                forwarder.stop()
+                return
             await self.send_upstream_message(InitiateBINDRep(
                 bind_id=message.bind_id, listening_host=message.listening_host,
                 listening_port=message.listening_port, reason=0
@@ -620,6 +626,9 @@ class Client:
                 asyncio.open_connection(ip, port),
                 timeout=5
             )
+            if self.killed:
+                writer.close()
+                return
             tcp_client = TcpClient(reader, writer, None)
             self.tcp_clients[client_id] = tcp_client
 
@@ -715,7 +724,6 @@ class Client:
                     removed.writer.close()
                 return
             tcp_client.writer.write(message.data)
-            await tcp_client.writer.drain()
         elif isinstance(message, InitiateBINDReq):
             asyncio.create_task(self.handle_bind(message))
         elif isinstance(message, CheckInMessage):
@@ -911,6 +919,7 @@ class HTTPClient(Client):
             loop = asyncio.get_event_loop()
             resp = await loop.run_in_executor(None, self._blocking_http_req, req, 15.0)
             if not resp:
+                self._pending.clear()
                 await asyncio.sleep(0.1)
                 continue
 
@@ -937,7 +946,7 @@ class RemotePortForwarder:
         self.server = None
 
     async def handle_client(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
-        if self.messenger.killed:
+        if self.messenger.killed or self not in self.messenger.remote_port_forwarders:
             writer.close()
             return
         tcp_client = TcpClient(reader, writer, self.identifier)
@@ -946,6 +955,11 @@ class RemotePortForwarder:
         writer.transport.pause_reading()
 
         self.messenger.tcp_clients[client_id] = tcp_client
+
+        if self not in self.messenger.remote_port_forwarders:
+            self.messenger.tcp_clients.pop(client_id, None)
+            writer.close()
+            return
 
         upstream_message = InitiateTCPClientReq(
             client_id=client_id,
@@ -963,6 +977,9 @@ class RemotePortForwarder:
             )
         except OSError:
             print(f'[!] {self.listening_host}:{self.listening_port} is already in use or encountered an error')
+            return False
+        if self.messenger.killed:
+            self.server.close()
             return False
         print(f'[+] Remote Port Forwarder listening on {self.listening_host}:{self.listening_port}')
         self.messenger.remote_port_forwarders.append(self)
