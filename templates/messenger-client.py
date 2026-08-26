@@ -905,6 +905,13 @@ class HTTPClient(Client):
         loop = asyncio.get_event_loop()
         resp = await loop.run_in_executor(None, self._blocking_http_req, req, 10.0)
         if self.identifier:
+            if resp:
+                messages = self.deserialize_messages(resp)
+                if any(isinstance(m, CheckOutMessage) for m in messages):
+                    self.handle_checkout()
+                    return
+                for msg in messages:
+                    await self.dispatch_message(msg)
             return
         messages = self.deserialize_messages(resp)
         assert len(messages) > 0, f"[*] Invalid response from server:\n{resp}"
