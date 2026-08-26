@@ -598,11 +598,11 @@ class Client:
                 self, message.bind_id, message.listening_host, message.listening_port,
                 message.destination_host, message.destination_port
             )
-            success = await forwarder.start()
-            if not success:
+            reason = await forwarder.start()
+            if reason != 0:
                 if not self.killed:
                     await self.send_upstream_message(InitiateBINDRep(
-                        bind_id=message.bind_id, listening_host=message.listening_host, listening_port=message.listening_port, reason=1
+                        bind_id=message.bind_id, listening_host=message.listening_host, listening_port=message.listening_port, reason=reason
                     ))
                 return
             if self.killed:
@@ -854,14 +854,25 @@ class WSClient(Client):
             if self.killed:
                 break
 
+    def _requeue_first(self, message):
+        remaining = [message]
+        while not self.upstream_messages.empty():
+            remaining.append(self.upstream_messages.get_nowait())
+        for m in remaining:
+            self.upstream_messages.put_nowait(m)
+
     async def _send_loop(self):
         while True:
-            # Parks here (no CPU) until a message is enqueued.
-            first = await self.upstream_messages.get()
-            batch = [CheckInMessage(messenger_id=self.identifier), first]
-            while not self.upstream_messages.empty():
-                batch.append(self.upstream_messages.get_nowait())
-            await self.ws.send_bytes(self.serialize_messages(batch))
+            message = await self.upstream_messages.get()
+            try:
+                await self.ws.send_bytes(self.serialize_messages(
+                    [CheckInMessage(messenger_id=self.identifier), message]))
+            except Exception:
+                self._requeue_first(message)
+                break
+            except BaseException:
+                self._requeue_first(message)
+                raise
 
     async def send_upstream_message(self, upstream_message):
         # Producer: just enqueue. The single send loop serializes the socket.
@@ -996,16 +1007,20 @@ class RemotePortForwarder:
             self.server = await asyncio.start_server(
                 self.handle_client, self.listening_host, self.listening_port
             )
-        except OSError:
+        except OSError as e:
+            reason = {
+                errno.EADDRINUSE: 2,
+                errno.EACCES: 3,
+            }.get(e.errno, 1)
             print(f'[!] {self.listening_host}:{self.listening_port} is already in use or encountered an error')
-            return False
+            return reason
         if self.messenger.killed:
             self.server.close()
-            return False
+            return 1
         print(f'[+] Remote Port Forwarder listening on {self.listening_host}:{self.listening_port}')
         self.messenger.remote_port_forwarders.append(self)
         asyncio.create_task(self._serve_forever())
-        return True
+        return 0
 
     async def _serve_forever(self):
         try:
@@ -1024,7 +1039,7 @@ class RemotePortForwarder:
             try:
                 await self.messenger.send_upstream_message(InitiateBINDRep(
                     bind_id=self.identifier, listening_host=self.listening_host,
-                    listening_port=self.listening_port, reason=1))
+                    listening_port=self.listening_port, reason=5))
             except Exception:
                 pass
 
