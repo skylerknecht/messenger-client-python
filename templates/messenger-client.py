@@ -1147,6 +1147,8 @@ async def main():
             await asyncio.sleep(sleep_time)
             try:
                 await client.connect()
+                if client.killed:
+                    break
                 print(f'[+] Reconnected')
                 consecutive_failures = 0
                 await client.start()
