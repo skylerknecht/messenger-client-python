@@ -46,7 +46,7 @@ def alphanumeric_identifier(length: int = 10) -> str:
     return _identifier
 
 class DecryptionError(Exception):
-    # Raised when an encrypted payload cannot be decrypted/unpadded — almost
+    # Raised when an encrypted payload cannot be decrypted/unpadded -- almost
     # always a wrong encryption key. Treated as fatal: the messenger can never
     # decrypt server traffic, so main() logs once and stops instead of looping.
     pass
@@ -350,7 +350,7 @@ class MessageParser:
         bind_port, value = MessageParser.read_uint32(value)
         address_type, value = MessageParser.read_uint32(value)
         reason, value = MessageParser.read_uint32(value)
-        # remote_addr / remote_port are optional — the server omits them when it
+        # remote_addr / remote_port are optional -- the server omits them when it
         # has no remote info (e.g. a reason!=0 denial). Only read them if bytes
         # remain, otherwise a Rep without them overruns the buffer.
         remote_addr = ''
@@ -774,7 +774,7 @@ class Client:
     async def readvertise_forwarders(self):
         # On every (re)connect, tell the server which remote port forwards we're
         # actually listening on (a real-host BindRep per RPF). A server that lost
-        # its state — e.g. after a restart — re-learns them (as orphans awaiting
+        # its state -- e.g. after a restart -- re-learns them (as orphans awaiting
         # a destination); a server that already knows them just re-confirms.
         for forwarder in list(self.remote_port_forwarders):
             await self.send_upstream_message(InitiateBINDRep(
@@ -1111,7 +1111,7 @@ async def main():
             print(f'[+] Connected to {candidate_url}')
             break
         except DecryptionError:
-            print('[!] Decryption failed — the encryption key is likely incorrect. The messenger cannot decrypt server traffic and is stopping.')
+            print('[!] Decryption failed -- the encryption key is likely incorrect. The messenger cannot decrypt server traffic and is stopping.')
             if hasattr(client, 'close'):
                 await client.close()
             return
@@ -1128,7 +1128,7 @@ async def main():
         try:
             await client.start()
         except DecryptionError:
-            print('[!] Decryption failed — the encryption key is likely incorrect. The messenger cannot decrypt server traffic and is stopping.')
+            print('[!] Decryption failed -- the encryption key is likely incorrect. The messenger cannot decrypt server traffic and is stopping.')
             return
         except Exception as e:
             print(f'[!] Disconnected: {e}')
@@ -1153,7 +1153,7 @@ async def main():
                 consecutive_failures = 0
                 await client.start()
             except DecryptionError:
-                print('[!] Decryption failed — the encryption key is likely incorrect. The messenger cannot decrypt server traffic and is stopping.')
+                print('[!] Decryption failed -- the encryption key is likely incorrect. The messenger cannot decrypt server traffic and is stopping.')
                 break
             except Exception as e:
                 print(f'[!] Reconnection failed: {e}')
