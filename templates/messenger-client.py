@@ -674,7 +674,7 @@ class Client:
         if not self.killed:
             upstream_message = InitiateTCPClientRep(
                 client_id=client_id, bind_address="0.0.0.0", bind_port=0,
-                address_type=1, reason=reason, remote_addr="0.0.0.0", remote_port=0
+                address_type=1, reason=reason, remote_addr="", remote_port=0
             )
             await self.send_upstream_message(upstream_message)
 
@@ -999,6 +999,8 @@ class RemotePortForwarder:
             self.server = await asyncio.start_server(
                 self.handle_client, self.listening_host, self.listening_port
             )
+        except socket.gaierror:
+            reason = 4
         except OSError as e:
             reason = {
                 errno.EADDRINUSE: 2,
