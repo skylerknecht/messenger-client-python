@@ -4,7 +4,7 @@ import base64
 import errno
 import hashlib
 import os
-import random
+import secrets
 import ssl
 import struct
 import socket
@@ -41,7 +41,7 @@ TcpClient = namedtuple('TcpClient', 'reader writer bind_id')
 alphanumeric = list(string.ascii_letters + string.digits)
 
 def alphanumeric_identifier(length: int = 10) -> str:
-    _identifier = [alphanumeric[random.randint(0, len(alphanumeric) - 1)] for _ in range(0, length)]
+    _identifier = [secrets.choice(alphanumeric) for _ in range(0, length)]
     _identifier = ''.join(_identifier)
     return _identifier
 
@@ -505,13 +505,14 @@ class MessageBuilder:
     @staticmethod
     def build_initiate_tcp_client_rep(client_id: str, bind_address: str, bind_port: int,
                                      address_type: int, reason: int, remote_addr: str, remote_port: int) -> bytes:
-        return (
+        result = (
             MessageBuilder.build_string(client_id) +
             MessageBuilder.build_string(bind_address) +
-            struct.pack('!III', bind_port, address_type, reason) +
-            MessageBuilder.build_string(remote_addr) +
-            struct.pack('!I', remote_port)
+            struct.pack('!III', bind_port, address_type, reason)
         )
+        if remote_addr:
+            result += MessageBuilder.build_string(remote_addr) + struct.pack('!I', remote_port)
+        return result
 
     @staticmethod
     def build_send_data(client_id: str, data: bytes) -> bytes:
