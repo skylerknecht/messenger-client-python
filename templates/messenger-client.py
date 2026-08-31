@@ -1000,7 +1000,8 @@ class RemotePortForwarder:
                 self.handle_client, self.listening_host, self.listening_port
             )
         except socket.gaierror:
-            reason = 4
+            print(f'[!] {self.listening_host}:{self.listening_port} could not be resolved')
+            return 4
         except OSError as e:
             reason = {
                 errno.EADDRINUSE: 2,
