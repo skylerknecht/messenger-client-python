@@ -36,6 +36,7 @@ USER_AGENT = "{{ user_agent }}"
 PROXY = "{{ proxy }}"
 RETRY_DURATION = {{ retry_duration }}
 RETRY_ATTEMPTS = {{ retry_attempts }}
+MAX_BATCH_SIZE = 100
 
 TcpClient = namedtuple('TcpClient', 'reader writer bind_id')
 alphanumeric = list(string.ascii_letters + string.digits)
@@ -574,6 +575,7 @@ class Client:
             data += MessageBuilder.serialize_message(self.encryption_key, message)
         return data
 
+
     async def handle_bind(self, message):
         if self.killed:
             return
@@ -856,11 +858,11 @@ class WSClient(Client):
 
     async def _send_loop(self):
         while True:
-            if not self._pending:
-                self._pending.append(await self.upstream_messages.get())
-                while not self.upstream_messages.empty():
-                    self._pending.append(self.upstream_messages.get_nowait())
             try:
+                if not self._pending:
+                    self._pending.append(await self.upstream_messages.get())
+                    while not self.upstream_messages.empty() and len(self._pending) < MAX_BATCH_SIZE:
+                        self._pending.append(self.upstream_messages.get_nowait())
                 batch = [CheckInMessage(messenger_id=self.identifier)]
                 batch.extend(self._pending)
                 await self.ws.send_bytes(self.serialize_messages(batch))
@@ -928,7 +930,7 @@ class HTTPClient(Client):
         await self.readvertise_forwarders()
         while not self.killed:
             if not self._pending:
-                while not self.upstream_messages.empty():
+                while not self.upstream_messages.empty() and len(self._pending) < MAX_BATCH_SIZE:
                     self._pending.append(self.upstream_messages.get_nowait())
 
             to_send = [CheckInMessage(messenger_id=self.identifier)]
