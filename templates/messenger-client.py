@@ -48,7 +48,7 @@ def alphanumeric_identifier(length: int = 10) -> str:
 
 class DecryptionError(Exception):
     # Raised when an encrypted payload cannot be decrypted/unpadded -- almost
-    # always a wrong encryption key. Treated as fatal: the messenger can never
+    # always a wrong encryption key. Treated as fatal: the client can never
     # decrypt server traffic, so main() logs once and stops instead of looping.
     pass
 
@@ -303,7 +303,7 @@ else:
 
 ### Message Structures ###
 
-CheckInMessage = namedtuple('CheckInMessage', ['messenger_id'])
+CheckInMessage = namedtuple('CheckInMessage', ['client_id'])
 InitiateTCPClientReq = namedtuple('InitiateTCPClientReq', ['client_id', 'destination_host', 'destination_port', 'listening_host', 'listening_port'])
 InitiateTCPClientRep = namedtuple('InitiateTCPClientRep', ['client_id', 'bind_address', 'bind_port', 'address_type', 'reason', 'remote_addr', 'remote_port'])
 SendDataMessage = namedtuple('SendDataMessage', ['client_id', 'data'])
@@ -327,8 +327,8 @@ class MessageParser:
 
     @staticmethod
     def parse_check_in(value: bytes) -> CheckInMessage:
-        messenger_id, _ = MessageParser.read_string(value)
-        return CheckInMessage(messenger_id=messenger_id)
+        client_id, _ = MessageParser.read_string(value)
+        return CheckInMessage(client_id=client_id)
 
     @staticmethod
     def parse_initiate_tcp_client_req(value: bytes) -> InitiateTCPClientReq:
@@ -459,7 +459,7 @@ class MessageBuilder:
             ))
         elif isinstance(msg, CheckInMessage):
             message_type = 0x04
-            value = MessageBuilder.build_check_in_message(msg.messenger_id)
+            value = MessageBuilder.build_check_in_message(msg.client_id)
         elif isinstance(msg, InitiateBINDReq):
             message_type = 0x05
             value = encrypt(encryption_key, MessageBuilder.build_initiate_bind_req(
@@ -488,8 +488,8 @@ class MessageBuilder:
         return struct.pack('!I', len(encoded)) + encoded
 
     @staticmethod
-    def build_check_in_message(messenger_id: str) -> bytes:
-        return MessageBuilder.build_string(messenger_id)
+    def build_check_in_message(client_id: str) -> bytes:
+        return MessageBuilder.build_string(client_id)
 
     @staticmethod
     def build_initiate_tcp_client_req(client_id: str, destination_host: str, destination_port: int,
@@ -730,7 +730,7 @@ class Client:
         elif isinstance(message, InitiateBINDReq):
             asyncio.create_task(self.handle_bind(message))
         elif isinstance(message, CheckInMessage):
-            self.identifier = message.messenger_id
+            self.identifier = message.client_id
         elif isinstance(message, CheckOutMessage):
             self.handle_checkout()
 
@@ -815,7 +815,7 @@ class WSClient(Client):
             ssl=self.ssl_context,
             proxy=self.proxy
         )
-        check_in_msg = self.serialize_messages([CheckInMessage(messenger_id=self.identifier)])
+        check_in_msg = self.serialize_messages([CheckInMessage(client_id=self.identifier)])
         await self.ws.send_bytes(check_in_msg)
         if self.identifier:
             return
@@ -824,7 +824,7 @@ class WSClient(Client):
         assert len(messages) > 0, f"[!] Invalid response from server:\n{msg.data}"
         check_in_msg = messages[0]
         assert isinstance(check_in_msg, CheckInMessage), f"[!] Expected CheckInMessage, got {type(check_in_msg)}"
-        self.identifier = check_in_msg.messenger_id
+        self.identifier = check_in_msg.client_id
 
     async def start(self):
         await self.readvertise_forwarders()
@@ -863,7 +863,7 @@ class WSClient(Client):
                     self._pending.append(await self.upstream_messages.get())
                     while not self.upstream_messages.empty() and len(self._pending) < MAX_BATCH_SIZE:
                         self._pending.append(self.upstream_messages.get_nowait())
-                batch = [CheckInMessage(messenger_id=self.identifier)]
+                batch = [CheckInMessage(client_id=self.identifier)]
                 batch.extend(self._pending)
                 await self.ws.send_bytes(self.serialize_messages(batch))
                 self._pending.clear()
@@ -903,7 +903,7 @@ class HTTPClient(Client):
             return resp.read()
 
     async def connect(self):
-        upstream_messages = [CheckInMessage(messenger_id=self.identifier)]
+        upstream_messages = [CheckInMessage(client_id=self.identifier)]
         req = request.Request(
             self.server_url,
             headers=self.headers,
@@ -924,7 +924,7 @@ class HTTPClient(Client):
         assert len(messages) > 0, f"[*] Invalid response from server:\n{resp}"
         check_in_msg = messages[0]
         assert isinstance(check_in_msg, CheckInMessage), "[*] Expected CheckInMessage, got something else"
-        self.identifier = check_in_msg.messenger_id
+        self.identifier = check_in_msg.client_id
 
     async def start(self):
         await self.readvertise_forwarders()
@@ -933,7 +933,7 @@ class HTTPClient(Client):
                 while not self.upstream_messages.empty() and len(self._pending) < MAX_BATCH_SIZE:
                     self._pending.append(self.upstream_messages.get_nowait())
 
-            to_send = [CheckInMessage(messenger_id=self.identifier)]
+            to_send = [CheckInMessage(client_id=self.identifier)]
             to_send.extend(self._pending)
 
             req = request.Request(
@@ -962,8 +962,8 @@ class HTTPClient(Client):
         await self.upstream_messages.put(upstream_message)
 
 class RemotePortForwarder:
-    def __init__(self, messenger, bind_id, listening_host, listening_port, destination_host, destination_port):
-        self.messenger = messenger
+    def __init__(self, parent, bind_id, listening_host, listening_port, destination_host, destination_port):
+        self.parent = parent
         self.identifier = bind_id
         self.listening_host = listening_host
         self.listening_port = int(listening_port)
@@ -972,7 +972,7 @@ class RemotePortForwarder:
         self.server = None
 
     async def handle_client(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
-        if self.messenger.killed or self not in self.messenger.remote_port_forwarders:
+        if self.parent.killed or self not in self.parent.remote_port_forwarders:
             writer.close()
             return
         tcp_client = TcpClient(reader, writer, self.identifier)
@@ -980,10 +980,10 @@ class RemotePortForwarder:
 
         writer.transport.pause_reading()
 
-        self.messenger.tcp_clients[client_id] = tcp_client
+        self.parent.tcp_clients[client_id] = tcp_client
 
-        if self not in self.messenger.remote_port_forwarders:
-            self.messenger.tcp_clients.pop(client_id, None)
+        if self not in self.parent.remote_port_forwarders:
+            self.parent.tcp_clients.pop(client_id, None)
             writer.close()
             return
 
@@ -994,7 +994,7 @@ class RemotePortForwarder:
             listening_host=self.listening_host,
             listening_port=self.listening_port
         )
-        await self.messenger.send_upstream_message(upstream_message)
+        await self.parent.send_upstream_message(upstream_message)
 
     async def start(self):
         try:
@@ -1011,11 +1011,11 @@ class RemotePortForwarder:
             }.get(e.errno, 1)
             print(f'[!] {self.listening_host}:{self.listening_port} is already in use or encountered an error')
             return reason
-        if self.messenger.killed:
+        if self.parent.killed:
             self.server.close()
             return 1
         print(f'[+] Remote Port Forwarder listening on {self.listening_host}:{self.listening_port}')
-        self.messenger.remote_port_forwarders.append(self)
+        self.parent.remote_port_forwarders.append(self)
         asyncio.create_task(self._serve_forever())
         return 0
 
@@ -1028,13 +1028,13 @@ class RemotePortForwarder:
             await self.cleanup()
 
     async def cleanup(self):
-        if self not in self.messenger.remote_port_forwarders:
+        if self not in self.parent.remote_port_forwarders:
             return
-        self.messenger.remote_port_forwarders.remove(self)
-        self.messenger.close_connections_for_bind(self.identifier)
-        if not self.messenger.killed:
+        self.parent.remote_port_forwarders.remove(self)
+        self.parent.close_connections_for_bind(self.identifier)
+        if not self.parent.killed:
             try:
-                await self.messenger.send_upstream_message(InitiateBINDRep(
+                await self.parent.send_upstream_message(InitiateBINDRep(
                     bind_id=self.identifier, listening_host=self.listening_host,
                     listening_port=self.listening_port, reason=5))
             except Exception:
@@ -1053,7 +1053,7 @@ def generate_hash(hash_input: str) -> bytes:
     return hasher.digest()
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="Messenger Client Runner")
+    parser = argparse.ArgumentParser(description="Client")
 
     parser.add_argument("--server-url")
     parser.add_argument("--encryption-key")
@@ -1061,7 +1061,6 @@ def parse_args():
     parser.add_argument("--proxy")
     parser.add_argument("--retry-duration", type=float)
     parser.add_argument("--retry-attempts", type=int)
-
     args, unknown = parser.parse_known_args()
     for arg in unknown:
         print(f'[!] Could not find argument `{arg}`.')
@@ -1089,7 +1088,6 @@ async def main():
         if args.retry_attempts is not None
         else RETRY_ATTEMPTS
     )
-
     if proxy and not proxy.startswith('http'):
         proxy = f'http://{proxy}'
 
@@ -1117,7 +1115,7 @@ async def main():
             print(f'[+] Connected to {candidate_url}')
             break
         except DecryptionError:
-            print('[!] Decryption failed -- the encryption key is likely incorrect. The messenger cannot decrypt server traffic and is stopping.')
+            print('[!] Decryption failed -- the encryption key is likely incorrect. Cannot decrypt server traffic and is stopping.')
             if hasattr(client, 'close'):
                 await client.close()
             return
@@ -1134,7 +1132,7 @@ async def main():
         try:
             await client.start()
         except DecryptionError:
-            print('[!] Decryption failed -- the encryption key is likely incorrect. The messenger cannot decrypt server traffic and is stopping.')
+            print('[!] Decryption failed -- the encryption key is likely incorrect. Cannot decrypt server traffic and is stopping.')
             return
         except Exception as e:
             print(f'[!] Disconnected: {e}')
@@ -1159,7 +1157,7 @@ async def main():
                 consecutive_failures = 0
                 await client.start()
             except DecryptionError:
-                print('[!] Decryption failed -- the encryption key is likely incorrect. The messenger cannot decrypt server traffic and is stopping.')
+                print('[!] Decryption failed -- the encryption key is likely incorrect. Cannot decrypt server traffic and is stopping.')
                 break
             except Exception as e:
                 print(f'[!] Reconnection failed: {e}')
@@ -1195,4 +1193,7 @@ try:
     loop.run_until_complete(main())
 except KeyboardInterrupt:
     print('\rShutdown')
+{% endif %}
+{% if exit_on_close %}
+sys.exit(0)
 {% endif %}
