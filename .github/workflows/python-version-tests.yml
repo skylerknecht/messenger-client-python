@@ -47,14 +47,23 @@ jobs:
           python-version: ${{ matrix.python-version }}
           cache: pip
 
-      - name: Install deps (if requirements.txt exists)
+      - name: Install deps
         run: |
           if [ -f requirements.txt ]; then
             python -m pip install -r requirements.txt
           fi
+          python -m pip install aiohttp websockets
 
-      - name: Run builder and client
-        shell: bash
+      - name: Build client
+        run: python builder.py --no-compile -e test-key
+
+      - name: Help menu
+        run: python client.py -h
+
+      - name: Connect to shim
         run: |
-          python builder.py --no-compile
-          python client.py -h
+          python test_shim.py 9999 &
+          SHIM_PID=$!
+          sleep 1
+          timeout 10 python client.py --server-url ws://127.0.0.1:9999 --encryption-key test-key --retry-attempts 0 || true
+          kill $SHIM_PID 2>/dev/null || true

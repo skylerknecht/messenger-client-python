@@ -42,7 +42,7 @@ def add_arguments(parser):
 
 
 def build(args):
-    template_name = "messenger-client.py"
+    template_name = "client.py"
 
     template_dir = Path(__file__).resolve().parent / "templates"
     if not template_dir.is_dir():
