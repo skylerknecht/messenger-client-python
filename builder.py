@@ -1,7 +1,5 @@
 import argparse
 import py_compile
-import shutil
-import tempfile
 
 from pathlib import Path
 from jinja2 import Environment, FileSystemLoader, select_autoescape
@@ -69,20 +67,16 @@ def build(args):
         print(f"[+] Wrote Python client to '{out_path}'")
     else:
         pyc_path = out_path.with_suffix(".pyc")
-        tmp = Path(tempfile.mkdtemp())
         try:
-            generic_name = tmp / out_path.name
-            shutil.copy2(out_path, generic_name)
             py_compile.compile(
-                str(generic_name), cfile=str(pyc_path), doraise=True
+                str(out_path), cfile=str(pyc_path), doraise=True,
+                dfile=out_path.name
             )
             out_path.unlink()
             print(f"[+] Compiled Python client to '{pyc_path}'")
         except py_compile.PyCompileError as e:
             print(f"[!] Compilation failed: {e}")
             print(f"[*] Source written to '{out_path}'")
-        finally:
-            shutil.rmtree(tmp, ignore_errors=True)
 
     if args.proxy:
         print("[!] Warning: ws:// through an HTTP proxy may fail — aiohttp sends it in absolute form instead of using CONNECT. Use wss:// with a proxy.")
