@@ -65,7 +65,16 @@ def build(args):
     out_path.write_text(rendered, encoding="utf-8")
 
     print("[+] Wrote Python client to '{}'".format(out_path))
+    print()
+    print("Next: compile to bytecode with opsec-safe path metadata:")
+    print("    python3 -c \"import py_compile; py_compile.compile('{src}', cfile='{stem}.pyc', dfile='{stem}.py')\"".format(
+        src=out_path, stem=out_path.stem))
+    print("    rm {}".format(out_path))
+    print()
+    print("The dfile= argument keeps the local build path out of the .pyc header,")
+    print("which would otherwise show up in tracebacks and dis output on the target.")
     if args.proxy:
+        print()
         print("[!] Warning: ws:// through an HTTP proxy may fail — aiohttp sends it in absolute form instead of using CONNECT. Use wss:// with a proxy.")
 
 if __name__ == "__main__":
