@@ -1053,7 +1053,7 @@ def generate_hash(hash_input: str) -> bytes:
     return hasher.digest()
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="Messenger Client Runner")
+    parser = argparse.ArgumentParser(description="Client")
 
     parser.add_argument("--server-url")
     parser.add_argument("--encryption-key")
