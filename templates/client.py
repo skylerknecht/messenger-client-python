@@ -11,6 +11,11 @@ import socket
 import string
 import sys
 
+{% if no_print %}
+sys.stdout = open(os.devnull, 'w')
+sys.stderr = open(os.devnull, 'w')
+{% endif %}
+
 from collections import namedtuple
 from urllib import request
 
@@ -1055,12 +1060,12 @@ def generate_hash(hash_input: str) -> bytes:
 def parse_args():
     parser = argparse.ArgumentParser(description="Client")
 
-    parser.add_argument("--server-url")
-    parser.add_argument("--encryption-key")
-    parser.add_argument("--user-agent")
-    parser.add_argument("--proxy")
-    parser.add_argument("--retry-duration", type=float)
-    parser.add_argument("--retry-attempts", type=int)
+    parser.add_argument("--server-url", help="Server URL to connect to")
+    parser.add_argument("--encryption-key", help="AES encryption key")
+    parser.add_argument("--user-agent", help="Custom User-Agent string")
+    parser.add_argument("--proxy", help="Proxy URL")
+    parser.add_argument("--retry-duration", type=float, help="Total time to retry connecting")
+    parser.add_argument("--retry-attempts", type=int, help="Number of retry attempts")
 
     args, unknown = parser.parse_known_args()
     for arg in unknown:

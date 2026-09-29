@@ -19,6 +19,11 @@ def add_arguments(parser):
         action="store_true",
         help="Don't obfuscate the client.",
     )
+    builder.add_argument(
+        "--no-print",
+        action="store_true",
+        help="Compile output-suppression into the client (stdout and stderr are redirected to os.devnull at startup, before any imports print).",
+    )
 
     cfg = parser.add_argument_group("Client configuration")
     cfg.add_argument("--server-url", default="localhost:8080",
