@@ -1,6 +1,10 @@
 import argparse
-
+import sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import its
+
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36"
@@ -67,9 +71,12 @@ def build(args):
     print("[+] Wrote Python client to '{}'".format(out_path))
     print()
     print("Next: compile to bytecode with opsec-safe path metadata:")
-    print("    python3 -c \"import py_compile; py_compile.compile('{src}', cfile='{stem}.pyc', dfile='{stem}.py')\"".format(
+    print("    python -c \"import py_compile; py_compile.compile('{src}', cfile='{stem}.pyc', dfile='{stem}.py')\"".format(
         src=out_path, stem=out_path.stem))
-    print("    rm {}".format(out_path))
+    if its.windows:
+        print("    del {}".format(out_path))
+    else:
+        print("    rm {}".format(out_path))
     print()
     print("The dfile= argument keeps the local build path out of the .pyc header,")
     print("which would otherwise show up in tracebacks and dis output on the target.")
