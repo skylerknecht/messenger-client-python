@@ -1,143 +1,70 @@
 # Python Messenger Client
 
-![CI](https://img.shields.io/github/actions/workflow/status/skylerknecht/messenger-client-python/python-version-tests.yml?branch=main&label=Python%20Version%20Tests)
-
 ## Overview
 
-The Client is a cross-platform compatible Messenger Client supporting Python v3.6+.
+A cross-platform Messenger client supporting Python 3.6+.
 
-## Primary Capabilities
+## Capabilities
 
-| Capability                 | Support Status                                         |
-|----------------------------|--------------------------------------------------------|
-| Transports                 | HTTP and WebSockets                                    |
-| Encryption                 | AES-256-CBC with random IV prefix.                     |
-| Reconnection procedure     | Defaults to five (5) attempts over sixty (60) seconds. |
-| SOCKS5 TCP                 | Supported                                              |
-| SOCKS5 UDP                 | Not Supported                                          |
-
-## Client-Specific Capabilities
-
-| Capability                    | Support Status                                                                                          |
-|-------------------------------|---------------------------------------------------------------------------------------------------------|
-| Multi-Threaded Deploy-ability | Provide `--non-main-thread` to the builder script if the client is not meant to run in the main thread. |
+| Capability             | Status                                             |
+|------------------------|----------------------------------------------------|
+| Transports             | HTTP and WebSockets                                |
+| Encryption             | AES-256-CBC with random IV prefix                  |
+| Reconnection           | 5 attempts over 60 seconds (configurable)          |
+| SOCKS5 TCP             | Supported                                          |
+| SOCKS5 UDP             | Not Supported                                      |
+| Remote Port Forwards   | Supported (server-initiated via `remote` command)  |
 
 ## Quick Start
 
 ```
-operator~# ./builder.py --encryption-key test
+operator~# python builder.py -e test
 [+] Wrote Python client to 'client.py'
-operator~# ./client.py 
+
+target~# python client.py
 [+] Connected to ws://localhost:8080/
 ```
 
-## Usage
+## Builder Options
 
-To build the client, execute `builder.py` or `messenger-builder` from the [Messenger Repository](https://github.com/skylerknecht/messenger).
+Run `builder.py` directly or use `messenger-builder python` from the [Messenger repository](https://github.com/skylerknecht/messenger).
 
-Both scripts accept the same options and will generate a Python Messenger Client. If provided options, the builder scripts
-will hard-code the options into the script. Once built, the operator can specify command-line arguments that will override
-the hardcoded options. Those options and their definitions are shown below. 
+Options provided to the builder are hardcoded into the output script. The operator can override them at runtime with the same flags.
 
-## Client Options
+### Builder-Only Options
 
-| Option                                        | Flag                      | Default Value          |
-|-----------------------------------------------|---------------------------|------------------------|
-| [Server URL](#server-url)                     | `--server-url`            | localhost:8080         |
-| [Encryption Key](#encryption-key)             | `--encryption-key`        | None                   |
-| [User Agent](#user-agent)                     | `--user-agent`            | [Specified Here](https://github.com/skylerknecht/messenger-client-python/blob/main/builder.py#L6)
-| [Proxy](#proxy)                               | `--proxy`                 | None                   |
-| [Remote Port Forwards](#remote-port-forwards) | `--remote-port-forwards`  | None                   |
-| [Retry Duration](#retry-duration)             | `--retry-duration`        | One Minute             |
-| [Retry Attempts](#retry-attempts)             | `--retry-attempts`        | Five                   |
-| [Name](#name)                                 | `--name`                  | client.py              |
+| Flag                  | Default    | Description                                                        |
+|-----------------------|------------|--------------------------------------------------------------------|
+| `--name`              | client.py  | Output filename                                                    |
+| `--non-main-thread`   | off        | Build for non-main-thread execution (not CTRL+C-safe on WebSocket) |
+| `--no-obfuscate`      | off        | Skip obfuscation                                                   |
+| `--no-print`          | off        | Suppress all stdout/stderr at startup                              |
 
-### Server URL
+### Client Configuration
 
-Once the Messenger Server is running, the operator will be provided a server URL that can be set with `--server-url`. 
+| Flag                    | Default        | Description                              |
+|-------------------------|----------------|------------------------------------------|
+| `--server-url`          | localhost:8080 | Server URL (protocol sets transport)     |
+| `-e`, `--encryption-key`| (none)        | AES encryption key                       |
+| `--user-agent`          | Chrome 141     | HTTP/WebSocket User-Agent string         |
+| `--proxy`               | (none)         | HTTP proxy (`http://user:pass@host:port`)|
 
-```
-builder.py --server-url http://localhost:8080
-```
+### Retry Behavior
 
-The client will attempt to establish a connection to the server based on the protocol specified in the server URL. For HTTP, leave the protocol as 
-`http://`, for websockets use `ws://`. Given that the server is listening with SSL encryption, provide the SSL 
-alternative to each protocol. 
+| Flag                | Default | Description                           |
+|---------------------|---------|---------------------------------------|
+| `--retry-duration`  | 60      | Total seconds to keep retrying        |
+| `--retry-attempts`  | 5       | Number of reconnection attempts       |
 
-#### Encryption Key
+Set `--retry-attempts 0` to disable reconnection.
 
-Messenger Server will also provide an encryption key upon startup that can be hardcoded.
+## Transport Selection
 
-```
-builder.py --encryption-key SuP3rs_crEtk3y
-```
+The protocol in `--server-url` determines the transport:
 
-Since the server expects encryption, the default will likely cause issues; therefore, the client outputs an 
-error.
+- `http://` or `https://` — HTTP polling
+- `ws://` or `wss://` — WebSocket
 
-```
-[!] No encryption key provided, please specify one with --encryption-key.
-```
+## Remote Port Forwards
 
-#### User Agent
-
-For HTTP-based protocols, the operator can control the user-agent header. 
-
-```
-builder.py --user-agent "Test User Agent"
-```
-
-#### Proxy
-
-Enterprise environments typically have outbound proxies. Operators can provide a proxy using the HTTP-proxy schema. 
-
-```
-builder.py --proxy http://user:password@localhost:8080
-```
-
-#### Remote Port Forwards
-
-Messenger expects clients to attempt to set up remote port forwards on the client side. The operator can specify multiple port forwards 
-with the schema `LISTENING-HOST:LISTENING-PORT:DESTINATION-HOST:DESTINATION-PORT`. 
-
-```
-builder.py --remote-port-forwards localhost:8080:remotehost:8080
-```
-
-This will forward all local connections on 8080 to a remote host on 8080. Given that the operator has not permitted the connection server-side, 
-they will see the following message.
-
-```
-[!] Messenger `test` has no Remote Port Forwarder configured for remotehost:8080, denying forward!
-```
-
-#### Retry Duration
-
-Clients will disconnect for various reasons. Given that the client does not completely exit, it will attempt to reconnect. Operators can 
-control how long the client will attempt to reconnect by specifying a retry duration. This value is expected to be in seconds. For example,
-if the retry duration is set to 120, then the client will attempt to reconnect for two minutes. 
-
-```
-builder.py --retry-duration 100
-```
-
-To disable reconnection attempts, set the retry attempts option to 0. 
-
-#### Retry Attempts
-
-In combination with the retry duration, retry attempts determine the minimum time the client waits between reconnection attempts. 
-
-```
-builder.py --retry-attempts 100
-```
-
-#### Name
-
-The build process outputs an artifact, and operators can control its name.
-
-```
-builder.py --name output.py
-```
-
-
-
+Remote port forwards are configured server-side with the `remote` command, not at build time. See the [operator guide](https://github.com/skylerknecht/messenger/blob/main/docs/remote-port-forwards.md).
