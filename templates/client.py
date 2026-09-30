@@ -740,6 +740,9 @@ class Client:
             self.handle_checkout()
 
     def handle_checkout(self):
+        {% if exit_on_close %}
+        os._exit(0)
+        {% endif %}
         print('[!] Kill signal received')
         self.killed = True
         for forwarder in list(self.remote_port_forwarders):

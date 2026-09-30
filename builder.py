@@ -23,6 +23,11 @@ def add_arguments(parser):
         action="store_true",
         help="Compile output-suppression into the client (stdout and stderr are redirected to os.devnull at startup, before any imports print).",
     )
+    builder.add_argument(
+        "--exit-on-close",
+        action="store_true",
+        help="Call os._exit(0) when the server sends a kill signal, terminating the host process.",
+    )
 
     cfg = parser.add_argument_group("Client configuration")
     cfg.add_argument("--server-url", default="localhost:8080",
