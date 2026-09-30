@@ -37,7 +37,6 @@ Options provided to the builder are hardcoded into the output script. The operat
 |-----------------------|------------|--------------------------------------------------------------------|
 | `--name`              | client.py  | Output filename                                                    |
 | `--non-main-thread`   | off        | Build for non-main-thread execution (not CTRL+C-safe on WebSocket) |
-| `--no-obfuscate`      | off        | Skip obfuscation                                                   |
 | `--no-print`          | off        | Suppress all stdout/stderr at startup                              |
 
 ### Client Configuration

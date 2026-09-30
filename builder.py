@@ -19,11 +19,6 @@ def add_arguments(parser):
         help="Run client from a non-main thread destination (not CTRL+C-safe for websockets).",
     )
     builder.add_argument(
-        "--no-obfuscate",
-        action="store_true",
-        help="Don't obfuscate the client.",
-    )
-    builder.add_argument(
         "--no-print",
         action="store_true",
         help="Compile output-suppression into the client (stdout and stderr are redirected to os.devnull at startup, before any imports print).",
