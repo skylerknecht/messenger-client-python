@@ -68,20 +68,22 @@ def build(args):
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(rendered, encoding="utf-8")
 
-    print("[+] Wrote Python client to '{}'".format(out_path))
-    print()
-    print("Next: compile to bytecode with opsec-safe path metadata:")
-    print("    python -c \"import py_compile; py_compile.compile('{src}', cfile='{stem}.pyc', dfile='{stem}.py')\"".format(
-        src=out_path, stem=out_path.stem))
+    print(f"[+] Wrote Python client to '{out_path}'")
     if its.windows:
-        print("    del {}".format(out_path))
+        print("[*] Install Python and launch the Messenger client:")
+        print("    - Install Python from https://www.python.org/downloads")
+        print(f"    - python {out_path}")
+        print("[*] For additional operational security, compile to bytecode to strip the local build path from tracebacks:")
+        print("    - python -c \"import py_compile; py_compile.compile('{src}', cfile='{stem}.pyc', dfile='{stem}.py')\"".format(
+            src=out_path, stem=out_path.stem))
     else:
-        print("    rm {}".format(out_path))
-    print()
-    print("The dfile= argument keeps the local build path out of the .pyc header,")
-    print("which would otherwise show up in tracebacks and dis output on the target.")
+        print("[*] Install Python and launch the Messenger client:")
+        print("    - apt install python3")
+        print(f"    - python3 {out_path}")
+        print("[*] For additional operational security, compile to bytecode to strip the local build path from tracebacks:")
+        print("    - python3 -c \"import py_compile; py_compile.compile('{src}', cfile='{stem}.pyc', dfile='{stem}.py')\"".format(
+            src=out_path, stem=out_path.stem))
     if args.proxy:
-        print()
         print("[!] Warning: ws:// through an HTTP proxy may fail — aiohttp sends it in absolute form instead of using CONNECT. Use wss:// with a proxy.")
 
 if __name__ == "__main__":

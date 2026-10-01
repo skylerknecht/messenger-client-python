@@ -1109,13 +1109,13 @@ async def main():
         attempts = ["ws", "wss", "http", "https"]
 
     client = None
-    for attempt in attempts:
+    for i, attempt in enumerate(attempts, 1):
         candidate_url = f"{attempt}://{remainder}"
         if "ws" in attempt and ws:
-            print(f'[*] Attempting to connect over {attempt.upper()}')
+            print(f'[*] Attempting to connect over {attempt.upper()} ({i}/{len(attempts)})')
             client = WSClient(candidate_url, encryption_key, user_agent, proxy)
         elif "http" in attempt:
-            print(f'[*] Attempting to connect over {attempt.upper()}')
+            print(f'[*] Attempting to connect over {attempt.upper()} ({i}/{len(attempts)})')
             client = HTTPClient(candidate_url, encryption_key, user_agent, proxy)
         else:
             print(f"[!] Unsupported scheme: {attempt}")

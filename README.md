@@ -2,7 +2,7 @@
 
 ## Overview
 
-A cross-platform Messenger client supporting Python 3.6+.
+Designed to run anywhere Python 3.6+ is installed.
 
 ## Capabilities
 
