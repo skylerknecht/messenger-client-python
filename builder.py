@@ -28,6 +28,16 @@ def add_arguments(parser):
         action="store_true",
         help="Call os._exit(0) when the server sends a kill signal, terminating the host process.",
     )
+    builder.add_argument(
+        "--no-adaptive-polling",
+        action="store_true",
+        help="Disable adaptive polling; use a fixed 100ms interval instead of exponential backoff with jitter.",
+    )
+    builder.add_argument(
+        "--no-arg-parsing",
+        action="store_true",
+        help="Remove runtime argument parsing; the client uses only the values baked in at build time.",
+    )
 
     cfg = parser.add_argument_group("Client configuration")
     cfg.add_argument("--server-url", default="localhost:8080",
@@ -47,6 +57,16 @@ def add_arguments(parser):
 
 
 def build(args):
+    if args.no_arg_parsing:
+        missing = []
+        if not args.encryption_key:
+            missing.append("--encryption-key / -e")
+        if args.server_url == "localhost:8080":
+            missing.append("--server-url")
+        if missing:
+            print(f"[!] --no-arg-parsing requires: {', '.join(missing)}")
+            sys.exit(1)
+
     template_name = "client.py"
 
     template_dir = Path(__file__).resolve().parent / "templates"
@@ -63,6 +83,21 @@ def build(args):
     template = env.get_template(template_name)
 
     rendered = template.render(**vars(args))
+
+    if args.no_print:
+        lines = rendered.splitlines()
+        result = []
+        for i, l in enumerate(lines):
+            if l.lstrip().startswith('print('):
+                # If next non-blank line is at same or lower indent (new block),
+                # check if previous line ends with ':' (except/if/else/etc.)
+                # and insert 'pass' to keep the block valid.
+                indent = len(l) - len(l.lstrip())
+                if result and result[-1].rstrip().endswith(':'):
+                    result.append(' ' * indent + 'pass')
+                continue
+            result.append(l)
+        rendered = '\n'.join(result) + '\n'
 
     out_path = Path(args.name)
     out_path.parent.mkdir(parents=True, exist_ok=True)

