@@ -21,7 +21,7 @@ def add_arguments(parser):
     builder.add_argument(
         "--no-print",
         action="store_true",
-        help="Compile output-suppression into the client (stdout and stderr are redirected to os.devnull at startup, before any imports print).",
+        help="Omit client output statements when rendering the templates.",
     )
     builder.add_argument(
         "--exit-on-close",
@@ -84,20 +84,6 @@ def build(args):
 
     rendered = template.render(**vars(args))
 
-    if args.no_print:
-        lines = rendered.splitlines()
-        result = []
-        for i, l in enumerate(lines):
-            if l.lstrip().startswith('print('):
-                # If next non-blank line is at same or lower indent (new block),
-                # check if previous line ends with ':' (except/if/else/etc.)
-                # and insert 'pass' to keep the block valid.
-                indent = len(l) - len(l.lstrip())
-                if result and result[-1].rstrip().endswith(':'):
-                    result.append(' ' * indent + 'pass')
-                continue
-            result.append(l)
-        rendered = '\n'.join(result) + '\n'
 
     out_path = Path(args.name)
     out_path.parent.mkdir(parents=True, exist_ok=True)

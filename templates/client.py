@@ -27,14 +27,22 @@ try:
     from Crypto.Util.Padding import pad, unpad
     pycrypto = True
 except ImportError:
+    {% if not no_print %}
     print('[!] Failed to import pycryptodome, performance will be impacted.')
+    {% else %}
+    pass
+    {% endif %}
 
 ws = False
 try:
     import aiohttp
     ws = True
 except ImportError:
+    {% if not no_print %}
     print('[!] Failed to import aiohttp, websockets will not be supported.')
+    {% else %}
+    pass
+    {% endif %}
 
 SERVER_URL = "{{ server_url }}"
 ENCRYPTION_KEY = "{{ encryption_key }}"
@@ -744,7 +752,11 @@ class Client:
         {% if exit_on_close %}
         os._exit(0)
         {% endif %}
+        {% if not no_print %}
         print('[!] Kill signal received')
+        {% else %}
+        pass
+        {% endif %}
         self.killed = True
         for forwarder in list(self.remote_port_forwarders):
             forwarder.stop()
@@ -895,6 +907,7 @@ class HTTPClient(Client):
         self.ssl_context.verify_mode = ssl.CERT_NONE
         self.upstream_messages = asyncio.Queue()
         self._pending = []
+        self._poll_wake = asyncio.Event()
         proxy_handler = request.ProxyHandler({
             'http': proxy,
             'https': proxy
@@ -904,7 +917,23 @@ class HTTPClient(Client):
         self.opener = request.build_opener(proxy_handler, https_handler)
 
     async def close_transport(self):
-        pass
+        self._poll_wake.set()
+
+    def handle_checkout(self):
+        super().handle_checkout()
+        self._poll_wake.set()
+
+    async def _wait_for_poll(self, delay):
+        if self.killed:
+            return
+        {% if not no_adaptive_polling %}
+        if not self.upstream_messages.empty():
+            return
+        {% endif %}
+        try:
+            await asyncio.wait_for(self._poll_wake.wait(), timeout=delay)
+        except asyncio.TimeoutError:
+            pass
 
     def _blocking_http_req(self, req, timeout = 10.0):
         with self.opener.open(req, timeout=timeout) as resp:
@@ -941,16 +970,20 @@ class HTTPClient(Client):
         _poll_delay = 0.1
         _POLL_MIN = 0.1
         _POLL_MAX = 10.0
-        _POLL_FACTOR = 1.5
+        _POLL_FACTOR = 1.1
         _POLL_JITTER = 0.2
         {% endif %}
         while not self.killed:
+            self._poll_wake.clear()
             if not self._pending:
                 while not self.upstream_messages.empty() and len(self._pending) < MAX_BATCH_SIZE:
                     self._pending.append(self.upstream_messages.get_nowait())
 
             to_send = [CheckInMessage(messenger_id=self.identifier)]
             to_send.extend(self._pending)
+            {% if not no_adaptive_polling %}
+            _sent_activity = any(not isinstance(m, (CheckInMessage, CheckOutMessage)) for m in self._pending)
+            {% endif %}
 
             req = request.Request(
                 self.server_url,
@@ -960,25 +993,14 @@ class HTTPClient(Client):
 
             loop = asyncio.get_event_loop()
             resp = await loop.run_in_executor(None, self._blocking_http_req, req, 15.0)
-            if not resp:
-                self._pending.clear()
-                {% if not no_adaptive_polling %}
-                _poll_delay = min(_poll_delay * _POLL_FACTOR, _POLL_MAX)
-                _jittered = _poll_delay * (1.0 - _POLL_JITTER + random.random() * 2 * _POLL_JITTER)
-                await asyncio.sleep(_jittered)
-                {% else %}
-                await asyncio.sleep(0.1)
-                {% endif %}
-                continue
-
             self._pending.clear()
-            messages = self.deserialize_messages(resp)
+            messages = self.deserialize_messages(resp) if resp else []
             if any(isinstance(m, CheckOutMessage) for m in messages):
                 self.handle_checkout()
                 break
             {% if not no_adaptive_polling %}
             _real_msgs = sum(1 for m in messages if not isinstance(m, (CheckInMessage, CheckOutMessage)))
-            if _real_msgs > 0:
+            if _sent_activity or _real_msgs > 0:
                 _poll_delay = _POLL_MIN
             else:
                 _poll_delay = min(_poll_delay * _POLL_FACTOR, _POLL_MAX)
@@ -987,13 +1009,16 @@ class HTTPClient(Client):
                 await self.dispatch_message(message)
             {% if not no_adaptive_polling %}
             _jittered = _poll_delay * (1.0 - _POLL_JITTER + random.random() * 2 * _POLL_JITTER)
-            await asyncio.sleep(_jittered)
+            await self._wait_for_poll(_jittered)
             {% else %}
-            await asyncio.sleep(0.1)
+            await self._wait_for_poll(0.1)
             {% endif %}
 
     async def send_upstream_message(self, upstream_message):
         await self.upstream_messages.put(upstream_message)
+        {% if not no_adaptive_polling %}
+        self._poll_wake.set()
+        {% endif %}
 
 class RemotePortForwarder:
     def __init__(self, messenger, bind_id, listening_host, listening_port, destination_host, destination_port):
@@ -1036,19 +1061,31 @@ class RemotePortForwarder:
                 self.handle_client, self.listening_host, self.listening_port
             )
         except socket.gaierror:
+            {% if not no_print %}
             print(f'[!] {self.listening_host}:{self.listening_port} could not be resolved')
+            {% else %}
+            pass
+            {% endif %}
             return 4
         except OSError as e:
             reason = {
                 errno.EADDRINUSE: 2,
                 errno.EACCES: 3,
             }.get(e.errno, 1)
+            {% if not no_print %}
             print(f'[!] {self.listening_host}:{self.listening_port} is already in use or encountered an error')
+            {% else %}
+            pass
+            {% endif %}
             return reason
         if self.messenger.killed:
             self.server.close()
             return 1
+        {% if not no_print %}
         print(f'[+] Remote Port Forwarder listening on {self.listening_host}:{self.listening_port}')
+        {% else %}
+        pass
+        {% endif %}
         self.messenger.remote_port_forwarders.append(self)
         asyncio.create_task(self._serve_forever())
         return 0
@@ -1099,7 +1136,11 @@ def parse_args():
 
     args, unknown = parser.parse_known_args()
     for arg in unknown:
+        {% if not no_print %}
         print(f'[!] Could not find argument `{arg}`.')
+        {% else %}
+        pass
+        {% endif %}
     return args
 
 {% endif %}
@@ -1111,7 +1152,11 @@ async def main():
     server_url = args.server_url or SERVER_URL
     encryption_key = args.encryption_key or ENCRYPTION_KEY
     if not encryption_key:
+        {% if not no_print %}
         print('[!] No encryption key provided, please specify `--encryption-key`')
+        {% else %}
+        pass
+        {% endif %}
         return
     encryption_key = generate_hash(encryption_key)
     user_agent = args.user_agent or USER_AGENT
@@ -1153,35 +1198,67 @@ async def main():
         elif "http" in attempt:
             client = HTTPClient(candidate_url, encryption_key, user_agent, proxy)
         else:
+            {% if not no_print %}
             print(f"[!] Unsupported scheme: {attempt}")
+            {% else %}
+            pass
+            {% endif %}
             continue
+        {% if not no_print %}
         print(f'[*] Attempting to connect over {attempt.upper()} to {candidate_url} ({i}/{len(attempts)})')
+        {% else %}
+        pass
+        {% endif %}
         try:
             await client.connect()
+            {% if not no_print %}
             print(f'[+] Connected to {candidate_url}')
+            {% else %}
+            pass
+            {% endif %}
             break
         except DecryptionError:
+            {% if not no_print %}
             print('[!] Decryption failed -- the encryption key is likely incorrect. The messenger cannot decrypt server traffic and is stopping.')
+            {% else %}
+            pass
+            {% endif %}
             if hasattr(client, 'close'):
                 await client.close()
             return
         except Exception as e:
+            {% if not no_print %}
             print(f'[!] Connection failed: {e}')
+            {% else %}
+            pass
+            {% endif %}
             client = None
             continue
 
     if client is None:
+        {% if not no_print %}
         print('[!] All connection attempts failed.')
+        {% else %}
+        pass
+        {% endif %}
         return
 
     try:
         try:
             await client.start()
         except DecryptionError:
+            {% if not no_print %}
             print('[!] Decryption failed -- the encryption key is likely incorrect. The messenger cannot decrypt server traffic and is stopping.')
+            {% else %}
+            pass
+            {% endif %}
             return
         except Exception as e:
+            {% if not no_print %}
             print(f'[!] Disconnected: {e}')
+            {% else %}
+            pass
+            {% endif %}
 
         if client.killed:
             return
@@ -1193,20 +1270,36 @@ async def main():
         consecutive_failures = 0
         while consecutive_failures < retry_attempts:
             consecutive_failures += 1
+            {% if not no_print %}
             print(f'[*] Attempting to reconnect ({consecutive_failures}/{retry_attempts})')
+            {% else %}
+            pass
+            {% endif %}
             await asyncio.sleep(sleep_time)
             try:
                 await client.connect()
                 if client.killed:
                     break
+                {% if not no_print %}
                 print(f'[+] Reconnected')
+                {% else %}
+                pass
+                {% endif %}
                 consecutive_failures = 0
                 await client.start()
             except DecryptionError:
+                {% if not no_print %}
                 print('[!] Decryption failed -- the encryption key is likely incorrect. The messenger cannot decrypt server traffic and is stopping.')
+                {% else %}
+                pass
+                {% endif %}
                 break
             except Exception as e:
+                {% if not no_print %}
                 print(f'[!] Reconnection failed: {e}')
+                {% else %}
+                pass
+                {% endif %}
 
             if client.killed:
                 break
@@ -1231,12 +1324,20 @@ def run_coro_in_thread(coro):
 try:
     run_coro_in_thread(main())
 except KeyboardInterrupt:
+    {% if not no_print %}
     print('\rShutdown')
+    {% else %}
+    pass
+    {% endif %}
 {% else %}
 loop = asyncio.new_event_loop()
 asyncio.set_event_loop(loop)
 try:
     loop.run_until_complete(main())
 except KeyboardInterrupt:
+    {% if not no_print %}
     print('\rShutdown')
+    {% else %}
+    pass
+    {% endif %}
 {% endif %}
